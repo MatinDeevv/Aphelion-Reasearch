@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project data (large files)
+data/ticks/
+data/bars/
+data/features/
+data/gauntlet/
+data/external/
+models/
+genomes/archive/
+nemesis_sessions/
+aphelion_training_data/
+
+# Logs
+logs/*.db
+logs/*.log
+
+# Secrets
+.env
+*.key
+credentials.*
+
+# Node (from initial setup)
+node_modules/
+package.json
+package-lock.json

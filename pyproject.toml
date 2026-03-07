@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aphelion"
+version = "0.1.0"
+description = "APHELION Autonomous Trading System"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "polars>=0.19",
+    "scipy>=1.10",
+    "statsmodels>=0.14",
+]
+
+[project.optional-dependencies]
+ml = [
+    "torch>=2.0",
+    "xgboost>=2.0",
+    "lightgbm>=4.0",
+    "optuna>=3.0",
+    "shap>=0.43",
+]
+broker = [
+    "MetaTrader5>=5.0.0",
+]
+tui = [
+    "textual>=0.47",
+    "plotext>=5.0",
+]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21",
+]
+all = ["aphelion[ml,broker,tui,dev]"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.setuptools.packages.find]
+include = ["aphelion*"]
