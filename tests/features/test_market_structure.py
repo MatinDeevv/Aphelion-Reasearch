@@ -61,6 +61,38 @@ class TestOrderBlock:
         assert len(bullish_obs) == 1
 
 
+class TestBreakerBlock:
+    def setup_method(self):
+        self.engine = MarketStructureEngine()
+
+    def test_bullish_ob_becomes_bearish_breaker(self):
+        # Bullish OB at index 1 (bearish candle before bullish impulse)
+        # Then price breaks below OB low → becomes bearish breaker
+        opens =  np.array([2850, 2852, 2849, 2857, 2855, 2850, 2840])
+        highs =  np.array([2853, 2854, 2858, 2858, 2856, 2851, 2841])
+        lows =   np.array([2848, 2849, 2848, 2854, 2848, 2838, 2835])
+        closes = np.array([2852, 2849, 2857, 2855, 2849, 2839, 2836])
+        # OB at index 1: bearish candle (2852→2849), followed by bullish impulse at index 2
+        # OB zone: high=2854, low=2849
+        # Price closes below 2849 at indices 4,5,6 → breaker at first break
+
+        breakers = self.engine.detect_breaker_blocks(opens, highs, lows, closes)
+        bearish_breakers = [b for b in breakers if b.direction == "BEARISH"]
+        assert len(bearish_breakers) >= 1
+        assert bearish_breakers[0].price_low == 2849
+
+    def test_no_breaker_if_ob_holds(self):
+        # OB that never gets invalidated
+        opens =  np.array([2850, 2852, 2849, 2857, 2858])
+        highs =  np.array([2853, 2854, 2858, 2859, 2860])
+        lows =   np.array([2848, 2849, 2848, 2856, 2857])
+        closes = np.array([2852, 2849, 2857, 2858, 2859])
+        # Bullish OB at index 1, price stays above OB low (2849) → no breaker
+
+        breakers = self.engine.detect_breaker_blocks(opens, highs, lows, closes)
+        assert len(breakers) == 0
+
+
 class TestVolumeImbalance:
     def setup_method(self):
         self.engine = MarketStructureEngine()
@@ -97,3 +129,5 @@ class TestComputeAll:
         assert "fvg_count" in result
         assert "order_block_count" in result
         assert "last_choch_type" in result
+        assert "breaker_block_count" in result
+        assert "nearest_breaker_direction" in result

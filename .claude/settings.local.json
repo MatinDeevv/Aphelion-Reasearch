@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pandoc \"C:\\\\Users\\\\marti\\\\Downloads\\\\APHELION_Engineering_Spec_v1.docx\" -o /tmp/aphelion_spec.md)",
+      "Bash(python scripts/office/unpack.py \"C:\\\\Users\\\\marti\\\\Downloads\\\\APHELION_Engineering_Spec_v1.docx\" /tmp/aphelion_unpacked/)"
+    ]
+  }
+}

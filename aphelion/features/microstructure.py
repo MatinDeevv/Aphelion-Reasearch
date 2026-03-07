@@ -246,6 +246,9 @@ class MicrostructureEngine:
         else:
             self._state.spread_velocity = 0.0
 
+        # Quote Depth: total visible order size near best bid/ask
+        self._state.quote_depth = bid_size + ask_size
+
         return self._state
 
     def to_dict(self) -> dict:
@@ -258,4 +261,5 @@ class MicrostructureEngine:
             "micro_price_divergence": self._state.micro_price_divergence,
             "bid_ask_spread": self._state.bid_ask_spread,
             "spread_velocity": self._state.spread_velocity,
+            "quote_depth": self._state.quote_depth,
         }

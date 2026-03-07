@@ -100,3 +100,20 @@ class TestMicrostructureEngine:
         assert "tick_entropy" in d
         assert "hawkes_buy_intensity" in d
         assert "bid_ask_spread" in d
+        assert "quote_depth" in d
+
+    def test_quote_depth(self):
+        engine = MicrostructureEngine()
+        state = engine.update(
+            timestamp=1000.0,
+            bid=2850.0, ask=2850.50,
+            last_price=2850.25, volume=10.0,
+            bid_size=150.0, ask_size=200.0,
+        )
+        assert state.quote_depth == 350.0
+
+    def test_quote_depth_default(self):
+        engine = MicrostructureEngine()
+        # Default bid_size=1.0, ask_size=1.0
+        state = engine.update(1000.0, 2850.0, 2850.50, 2850.25, 10.0)
+        assert state.quote_depth == 2.0

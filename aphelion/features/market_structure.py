@@ -38,6 +38,16 @@ class SwingPoint:
 
 
 @dataclass
+class BreakerBlock:
+    """Order block invalidated by price — now flipped as reversal zone."""
+    index: int
+    price_high: float
+    price_low: float
+    direction: str  # "BULLISH" or "BEARISH" (flipped direction)
+    broken_at_index: int
+
+
+@dataclass
 class LiquidityPool:
     price_level: float
     count: int
@@ -204,6 +214,45 @@ class MarketStructureEngine:
         imbalance[:20] = False
         return imbalance
 
+    def detect_breaker_blocks(self, opens: np.ndarray, highs: np.ndarray,
+                              lows: np.ndarray, closes: np.ndarray) -> list[BreakerBlock]:
+        """
+        Detect breaker blocks: order blocks that price has broken through,
+        flipping them into high-probability reversal zones.
+        A bullish OB broken to the downside becomes a bearish breaker.
+        A bearish OB broken to the upside becomes a bullish breaker.
+        """
+        order_blocks = self.detect_order_blocks(opens, highs, lows, closes)
+        breakers = []
+
+        for ob in order_blocks:
+            # Check if price subsequently broke through the OB zone
+            for i in range(ob.index + 2, len(closes)):
+                if ob.direction == "BULLISH":
+                    # Bullish OB invalidated when price closes below its low
+                    if closes[i] < ob.price_low:
+                        breakers.append(BreakerBlock(
+                            index=ob.index,
+                            price_high=ob.price_high,
+                            price_low=ob.price_low,
+                            direction="BEARISH",  # Flipped
+                            broken_at_index=i,
+                        ))
+                        break
+                elif ob.direction == "BEARISH":
+                    # Bearish OB invalidated when price closes above its high
+                    if closes[i] > ob.price_high:
+                        breakers.append(BreakerBlock(
+                            index=ob.index,
+                            price_high=ob.price_high,
+                            price_low=ob.price_low,
+                            direction="BULLISH",  # Flipped
+                            broken_at_index=i,
+                        ))
+                        break
+
+        return breakers
+
     def detect_change_of_character(self, highs: np.ndarray, lows: np.ndarray,
                                     closes: np.ndarray) -> list[dict]:
         """
@@ -253,6 +302,7 @@ class MarketStructureEngine:
         liq_pools = self.detect_liquidity_pools(highs, lows)
         vol_imbalance = self.detect_volume_imbalance(closes, opens, volumes)
         choch = self.detect_change_of_character(highs, lows, closes)
+        breaker_blocks = self.detect_breaker_blocks(opens, highs, lows, closes)
 
         # Compute nearest features for current bar
         last_idx = len(closes) - 1
@@ -274,6 +324,15 @@ class MarketStructureEngine:
                 if dist < nearest_fvg_dist:
                     nearest_fvg_dist = dist
 
+        # Nearest breaker block
+        nearest_breaker_dist = float('inf')
+        nearest_breaker_dir = "NONE"
+        for bb in reversed(breaker_blocks):
+            dist = min(abs(last_price - bb.price_high), abs(last_price - bb.price_low))
+            if dist < nearest_breaker_dist:
+                nearest_breaker_dist = dist
+                nearest_breaker_dir = bb.direction
+
         return {
             "swing_high_count": len(swing_highs),
             "swing_low_count": len(swing_lows),
@@ -288,4 +347,7 @@ class MarketStructureEngine:
             "volume_imbalance": bool(vol_imbalance[-1]) if len(vol_imbalance) > 0 else False,
             "choch_count": len(choch),
             "last_choch_type": choch[-1]["type"] if choch else "NONE",
+            "breaker_block_count": len(breaker_blocks),
+            "nearest_breaker_distance": nearest_breaker_dist if nearest_breaker_dist != float('inf') else 0,
+            "nearest_breaker_direction": nearest_breaker_dir,
         }
