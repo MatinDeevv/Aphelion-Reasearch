@@ -35,6 +35,12 @@ class StrategyConfig:
     signal_cooldown_bars: int = 5          # Min bars between new trades
     max_open_positions: int = 3            # SENTINEL max simultaneous
     uncertainty_ceiling: float = 0.8       # Reject signals with high uncertainty
+    # Regime-adaptive confidence tuning
+    regime_trend_bonus: float = 0.05       # Boost confidence when TREND regime dominant
+    regime_range_penalty: float = 0.03     # Penalize confidence in RANGE-dominant regimes
+    # Kelly criterion position sizing
+    use_kelly_sizing: bool = True          # Use Kelly fraction for lot sizing
+    kelly_fraction: float = 0.25           # Fraction of full Kelly (quarter-Kelly)
 
 
 class HydraStrategy:
@@ -127,12 +133,33 @@ class HydraStrategy:
         else:
             return []
 
-        # Compute position size (capped at SENTINEL 2%)
+        # Regime-adaptive confidence adjustment
+        adjusted_confidence = signal.confidence
+        trend_weight = signal.regime_weights.get("TREND", 0.25)
+        range_weight = signal.regime_weights.get("RANGE", 0.25)
+        if trend_weight > 0.4:
+            adjusted_confidence += self._config.regime_trend_bonus
+        if range_weight > 0.4:
+            adjusted_confidence -= self._config.regime_range_penalty
+        adjusted_confidence = max(0.0, min(1.0, adjusted_confidence))
+
+        # Position sizing — Kelly criterion approximation or fixed risk
         size_pct = min(self._config.risk_per_trade, SENTINEL.max_position_pct)
 
-        # Scale by confidence: higher confidence → larger position
-        confidence_scalar = min(signal.confidence, 1.0)
-        size_pct *= confidence_scalar
+        if self._config.use_kelly_sizing and HAS_NP:
+            # Kelly fraction: f* = (p * b - q) / b
+            # p = confidence (win probability), q = 1-p, b = RR ratio
+            p = adjusted_confidence
+            q = 1.0 - p
+            b = self._config.rr_ratio
+            kelly_raw = (p * b - q) / b if b > 0 else 0.0
+            kelly_raw = max(0.0, kelly_raw)
+            kelly_sized = kelly_raw * self._config.kelly_fraction
+            size_pct = min(kelly_sized, size_pct)
+        else:
+            # Scale by confidence: higher confidence → larger position
+            confidence_scalar = min(adjusted_confidence, 1.0)
+            size_pct *= confidence_scalar
 
         # Simple lot size estimate (rough — broker sim handles exact sizing)
         equity = portfolio.equity

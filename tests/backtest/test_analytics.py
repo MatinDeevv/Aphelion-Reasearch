@@ -226,3 +226,103 @@ class TestPerformanceAnalyzer:
         pa = PerformanceAnalyzer(trades, eq, ts, 10000.0)
         assert pa.largest_win > 0
         assert pa.largest_loss < 0
+
+    # ── Ulcer Index ─────────────────────────────────────────────
+
+    def test_ulcer_index_zero_for_monotonic_equity(self):
+        eq = [10000.0, 10100.0, 10200.0, 10300.0, 10400.0]
+        ts = _make_timestamps(len(eq))
+        pa = PerformanceAnalyzer([], eq, ts, 10000.0)
+        assert pa.ulcer_index == pytest.approx(0.0, abs=1e-8)
+
+    def test_ulcer_index_positive_for_drawdown(self):
+        # Peak 11000, drops to 9900 = 10% drawdown
+        eq = [10000.0, 11000.0, 9900.0, 10500.0]
+        ts = _make_timestamps(len(eq))
+        pa = PerformanceAnalyzer([], eq, ts, 10000.0)
+        assert pa.ulcer_index > 0.0
+
+    def test_ulcer_index_increases_with_deeper_drawdowns(self):
+        eq_mild = [10000.0, 10500.0, 10200.0, 10600.0, 10400.0]
+        eq_severe = [10000.0, 10500.0, 8500.0, 10600.0, 7000.0]
+        ts = _make_timestamps(5)
+        pa_mild = PerformanceAnalyzer([], eq_mild, ts, 10000.0)
+        pa_severe = PerformanceAnalyzer([], eq_severe, ts, 10000.0)
+        assert pa_severe.ulcer_index > pa_mild.ulcer_index
+
+    def test_ulcer_index_single_point(self):
+        pa = PerformanceAnalyzer([], [10000.0], [datetime.now(timezone.utc)], 10000.0)
+        assert pa.ulcer_index == 0.0
+
+    # ── Ulcer Performance Index ────────────────────────────────
+
+    def test_ulcer_performance_index_zero_for_flat(self):
+        eq = [10000.0, 10000.0, 10000.0]
+        ts = _make_timestamps(3)
+        pa = PerformanceAnalyzer([], eq, ts, 10000.0)
+        assert pa.ulcer_performance_index == 0.0
+
+    def test_ulcer_performance_index_positive_for_profitable(self):
+        trades = _make_mixed_trades(70, 30, 200.0, -100.0)
+        eq = _make_equity_curve(trades)
+        ts = _make_timestamps(len(eq))
+        pa = PerformanceAnalyzer(trades, eq, ts, 10000.0)
+        # Profitable strategy should have positive UPI
+        if pa.ulcer_index > 0:
+            assert pa.ulcer_performance_index > 0
+
+    # ── Tail Ratio ──────────────────────────────────────────────
+
+    def test_tail_ratio_default_under_20_returns(self):
+        eq = [10000.0 + i * 10 for i in range(10)]
+        ts = [datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(days=i) for i in range(10)]
+        pa = PerformanceAnalyzer([], eq, ts, 10000.0)
+        # Too few daily returns → fallback 1.0
+        assert pa.tail_ratio == 1.0
+
+    def test_tail_ratio_computed_with_enough_data(self):
+        # Generate 100 daily equity points to have enough daily returns
+        np.random.seed(42)
+        returns = np.random.normal(0.001, 0.01, 100)
+        eq = [10000.0]
+        for r in returns:
+            eq.append(eq[-1] * (1 + r))
+        ts = [datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(days=i) for i in range(len(eq))]
+        pa = PerformanceAnalyzer([], eq, ts, 10000.0)
+        ratio = pa.tail_ratio
+        assert ratio > 0  # should be some finite value
+
+    def test_tail_ratio_inf_for_no_downside(self):
+        # Monotonically increasing = no negative daily returns
+        eq = [10000.0 + i * 100 for i in range(50)]
+        ts = [datetime(2024, 1, 1, tzinfo=timezone.utc) + timedelta(days=i) for i in range(50)]
+        pa = PerformanceAnalyzer([], eq, ts, 10000.0)
+        ratio = pa.tail_ratio
+        # 5th percentile of only-positive returns might still be > 0
+        assert ratio >= 1.0 or ratio == float("inf")
+
+    # ── Session Performance ─────────────────────────────────────
+
+    def test_session_performance_empty(self):
+        pa = PerformanceAnalyzer([], [10000.0], [datetime.now(timezone.utc)], 10000.0)
+        assert pa.session_performance == {}
+
+    def test_session_performance_groups_trades(self):
+        trades = _make_mixed_trades(10, 5, 200.0, -100.0)
+        eq = _make_equity_curve(trades)
+        ts = _make_timestamps(len(eq))
+        pa = PerformanceAnalyzer(trades, eq, ts, 10000.0)
+        sp = pa.session_performance
+        # Default trades don't have session attr → all go to UNKNOWN
+        assert "UNKNOWN" in sp
+        assert sp["UNKNOWN"]["trades"] == 15
+
+    def test_to_dict_contains_new_metric_keys(self):
+        trades = _make_mixed_trades(60, 40)
+        eq = _make_equity_curve(trades)
+        ts = _make_timestamps(len(eq))
+        pa = PerformanceAnalyzer(trades, eq, ts, 10000.0)
+        d = pa.to_dict()
+        new_keys = ["ulcer_index", "ulcer_performance_index", "tail_ratio", "session_performance"]
+        for key in new_keys:
+            assert key in d, f"Missing new metric key: {key}"

@@ -103,6 +103,95 @@ class WalkForwardResults:
     def num_windows(self) -> int:
         return len(self.windows)
 
+    @property
+    def overfit_ratio(self) -> float:
+        """Train/Test Sharpe ratio — values >> 1 indicate overfitting.
+        Ideal: close to 1.0. >2.0 is a red flag."""
+        train_sharpes = [
+            w.train_metrics.sharpe for w in self.windows
+            if w.train_metrics and w.test_metrics
+        ]
+        test_sharpes = [
+            w.test_metrics.sharpe for w in self.windows
+            if w.train_metrics and w.test_metrics
+        ]
+        if not test_sharpes:
+            return 0.0
+        avg_train = float(np.mean(train_sharpes))
+        avg_test = float(np.mean(test_sharpes))
+        if abs(avg_test) < 1e-10:
+            return float("inf") if avg_train > 0 else 0.0
+        return avg_train / avg_test
+
+    @property
+    def sharpe_decay(self) -> float:
+        """Percentage drop in Sharpe from train to test.
+        0% = no decay, 100% = complete decay."""
+        train_sharpes = [
+            w.train_metrics.sharpe for w in self.windows
+            if w.train_metrics and w.test_metrics
+        ]
+        test_sharpes = [
+            w.test_metrics.sharpe for w in self.windows
+            if w.train_metrics and w.test_metrics
+        ]
+        if not train_sharpes:
+            return 0.0
+        avg_train = float(np.mean(train_sharpes))
+        avg_test = float(np.mean(test_sharpes))
+        if abs(avg_train) < 1e-10:
+            return 0.0
+        return max(0.0, (avg_train - avg_test) / abs(avg_train) * 100.0)
+
+    def summary(self) -> str:
+        """Human-readable summary of walk-forward results."""
+        lines = [
+            "=" * 60,
+            "  WALK-FORWARD VALIDATION REPORT",
+            "=" * 60,
+            f"  Windows completed : {self.num_windows}",
+            f"  Total OOS trades  : {self.total_oos_trades}",
+            f"  Avg OOS Sharpe    : {self.avg_oos_sharpe:+.3f}",
+            f"  Min OOS Sharpe    : {self.min_oos_sharpe:+.3f}",
+            f"  Max OOS Sharpe    : {self.max_oos_sharpe:+.3f}",
+            f"  Std OOS Sharpe    : {self.std_oos_sharpe:.3f}",
+            f"  Avg OOS Return    : {self.avg_oos_return_pct:+.2f}%",
+            f"  Median OOS Return : {self.median_oos_return_pct:+.2f}%",
+            f"  Avg OOS MDD       : {self.avg_oos_mdd_pct:.2f}%",
+            f"  OOS Win Rate      : {self.oos_win_rate_pct:.1f}%",
+            f"  Profitable Windows: {self.profitable_windows}/{self.num_windows}"
+            f" ({self.profitable_window_ratio:.0%})",
+            f"  Overfit Ratio     : {self.overfit_ratio:.2f}",
+            f"  Sharpe Decay      : {self.sharpe_decay:.1f}%",
+            "-" * 60,
+            f"  APPROVED: {'YES' if self.deployment_approved else 'NO'}",
+            f"  Reason  : {self.deployment_reason}",
+            "=" * 60,
+        ]
+        return "\n".join(lines)
+
+    def to_dict(self) -> dict:
+        """Serialise results for logging / persistence."""
+        return {
+            "num_windows": self.num_windows,
+            "total_oos_trades": self.total_oos_trades,
+            "avg_oos_sharpe": self.avg_oos_sharpe,
+            "min_oos_sharpe": self.min_oos_sharpe,
+            "max_oos_sharpe": self.max_oos_sharpe,
+            "std_oos_sharpe": self.std_oos_sharpe,
+            "avg_oos_return_pct": self.avg_oos_return_pct,
+            "median_oos_return_pct": self.median_oos_return_pct,
+            "avg_oos_mdd_pct": self.avg_oos_mdd_pct,
+            "oos_win_rate_pct": self.oos_win_rate_pct,
+            "profitable_windows": self.profitable_windows,
+            "profitable_window_ratio": self.profitable_window_ratio,
+            "overfit_ratio": self.overfit_ratio,
+            "sharpe_decay": self.sharpe_decay,
+            "combined_profitability_score": self.combined_profitability_score,
+            "deployment_approved": self.deployment_approved,
+            "deployment_reason": self.deployment_reason,
+        }
+
 
 class WalkForwardEngine:
     """

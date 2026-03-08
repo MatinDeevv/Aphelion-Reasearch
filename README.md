@@ -239,7 +239,7 @@ This section compares the spec phase requirements (from the DOCX roadmap table) 
 | 2 | Risk Layer (`SENTINEL`) | `risk/sentinel/core.py`, `validator.py`, `position_sizer.py`, `circuit_breaker.py`, integration tests | DONE |
 | 3 | Backtesting Engine (`BACKTEST`) | `aphelion/backtest/engine.py`, `walk_forward.py`, `monte_carlo.py`, `metrics.py`, `analytics.py` | PARTIAL |
 | 4 | HYDRA v1 (`HYDRA-TFT`) | `intelligence/hydra/tft.py`, `dataset.py`, `trainer.py`, `inference.py`, `strategy.py` | PARTIAL |
-| 5 | Paper Trading | No dedicated paper-trading runtime path in active modules | NOT STARTED |
+| 5 | Paper Trading | `aphelion/paper/session.py`, `execution/paper.py`, `execution/mt5.py`, `paper/feed.py`, `paper/ledger.py`, 39 tests | IN PROGRESS |
 | 6 | TUI v1 | `aphelion/tui/` present but no implemented screens/app modules | NOT STARTED |
 | 7 | HYDRA Full Ensemble | `hydra/lstm.py`, `cnn.py`, `moe.py`, `ensemble.py` exist, but no acceptance evidence | PARTIAL |
 | 8 | PROMETHEUS v1 (NEAT) | `aphelion/evolution/prometheus/` scaffold only | NOT STARTED |

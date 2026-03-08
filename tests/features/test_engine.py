@@ -131,3 +131,129 @@ async def test_session_reset():
 
     fe.reset_session()
     assert fe._vwap[Timeframe.M1].to_dict()["session_vwap"] == 0.0
+
+
+# ── New technical indicator tests ───────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_macd_present_after_35_bars():
+    data_layer, completed_bars = await make_data_layer(n_ticks=2500)
+    assert len(completed_bars) >= 35
+
+    fe = FeatureEngine(data_layer)
+    result = fe.on_bar(completed_bars[-1])
+
+    assert "macd_line" in result
+    assert "macd_signal" in result
+    assert "macd_histogram" in result
+    assert isinstance(result["macd_line"], float)
+
+
+@pytest.mark.asyncio
+async def test_stochastic_present():
+    data_layer, completed_bars = await make_data_layer(n_ticks=1200)
+    assert len(completed_bars) >= 17
+
+    fe = FeatureEngine(data_layer)
+    result = fe.on_bar(completed_bars[-1])
+
+    assert "stoch_k" in result
+    assert "stoch_d" in result
+    assert 0.0 <= result["stoch_k"] <= 100.0
+    assert 0.0 <= result["stoch_d"] <= 100.0
+
+
+@pytest.mark.asyncio
+async def test_adx_present_after_28_bars():
+    data_layer, completed_bars = await make_data_layer(n_ticks=2000)
+    assert len(completed_bars) >= 28
+
+    fe = FeatureEngine(data_layer)
+    result = fe.on_bar(completed_bars[-1])
+
+    assert "adx" in result
+    assert result["adx"] >= 0.0
+
+
+@pytest.mark.asyncio
+async def test_obv_present():
+    data_layer, completed_bars = await make_data_layer(n_ticks=300)
+    assert len(completed_bars) >= 2
+
+    fe = FeatureEngine(data_layer)
+    result = fe.on_bar(completed_bars[-1])
+
+    assert "obv" in result
+    assert isinstance(result["obv"], float)
+
+
+@pytest.mark.asyncio
+async def test_roc_present_after_11_bars():
+    data_layer, completed_bars = await make_data_layer(n_ticks=800)
+    assert len(completed_bars) >= 11
+
+    fe = FeatureEngine(data_layer)
+    result = fe.on_bar(completed_bars[-1])
+
+    assert "roc_10" in result
+    assert isinstance(result["roc_10"], float)
+
+
+class TestStaticIndicators:
+    """Unit-level tests for static technical methods."""
+
+    def test_macd_basic(self):
+        # Uptrend → positive MACD
+        closes = np.linspace(100, 130, 50)
+        result = FeatureEngine._compute_macd(closes)
+        assert result["macd_line"] > 0
+        assert "macd_signal" in result
+        assert "macd_histogram" in result
+
+    def test_stochastic_range(self):
+        highs = np.array([110.0] * 20)
+        lows = np.array([90.0] * 20)
+        closes = np.array([100.0] * 20)
+        result = FeatureEngine._compute_stochastic(highs, lows, closes)
+        assert 0 <= result["stoch_k"] <= 100
+        assert 0 <= result["stoch_d"] <= 100
+
+    def test_stochastic_at_high(self):
+        highs = np.array([110.0] * 20)
+        lows = np.array([90.0] * 20)
+        closes = np.array([110.0] * 20)  # always at the high
+        result = FeatureEngine._compute_stochastic(highs, lows, closes)
+        assert result["stoch_k"] == pytest.approx(100.0)
+
+    def test_adx_returns_float(self):
+        rng = np.random.default_rng(42)
+        n = 60
+        closes = np.cumsum(rng.normal(0, 1, n)) + 100
+        highs = closes + rng.uniform(0.5, 1.5, n)
+        lows = closes - rng.uniform(0.5, 1.5, n)
+        adx = FeatureEngine._compute_adx(highs, lows, closes, period=14)
+        assert isinstance(adx, float)
+        assert adx >= 0
+
+    def test_adx_zero_on_short_data(self):
+        adx = FeatureEngine._compute_adx(
+            np.array([100.0] * 10),
+            np.array([99.0] * 10),
+            np.array([99.5] * 10),
+            period=14,
+        )
+        assert adx == 0.0
+
+    def test_obv_uptrend(self):
+        closes = np.array([100.0, 101.0, 102.0, 103.0, 104.0])
+        volumes = np.array([100.0, 200.0, 300.0, 400.0, 500.0])
+        obv = FeatureEngine._compute_obv(closes, volumes)
+        # All up closes → OBV = 200+300+400+500 = 1400
+        assert obv == pytest.approx(1400.0)
+
+    def test_obv_downtrend(self):
+        closes = np.array([104.0, 103.0, 102.0, 101.0, 100.0])
+        volumes = np.array([100.0, 200.0, 300.0, 400.0, 500.0])
+        obv = FeatureEngine._compute_obv(closes, volumes)
+        assert obv == pytest.approx(-1400.0)

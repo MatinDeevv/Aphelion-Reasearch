@@ -379,7 +379,7 @@ if HAS_TORCH:
             return path
 
         def load_checkpoint(self, path: str) -> None:
-            ckpt = torch.load(path, map_location=self._device)
+            ckpt = torch.load(path, map_location=self._device, weights_only=False)
             self._model.load_state_dict(ckpt["model_state_dict"])
             self._optimizer.load_state_dict(ckpt["optimizer_state_dict"])
             self._scheduler.load_state_dict(ckpt["scheduler_state_dict"])

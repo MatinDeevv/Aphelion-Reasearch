@@ -312,6 +312,62 @@ class PerformanceAnalyzer:
         return dict(Counter(trade.exit_reason for trade in self._trades))
 
     @property
+    def ulcer_index(self) -> float:
+        """Ulcer Index: measures depth and duration of drawdowns.
+        Lower is better. Very sensitive to prolonged drawdowns."""
+        series = self._equity_series()
+        if len(series) < 2:
+            return 0.0
+        peak = series[0]
+        sum_sq = 0.0
+        for eq in series:
+            if eq > peak:
+                peak = eq
+            if peak > 0:
+                dd_pct = ((peak - eq) / peak) * 100.0
+                sum_sq += dd_pct ** 2
+        return float(sqrt(sum_sq / len(series)))
+
+    @property
+    def ulcer_performance_index(self) -> float:
+        """Return / Ulcer Index — risk-adjusted performance metric."""
+        ui = self.ulcer_index
+        if ui < 1e-10:
+            return 0.0
+        return self.total_return_pct / ui
+
+    @property
+    def tail_ratio(self) -> float:
+        """95th percentile return / abs(5th percentile return).
+        > 1 means right tail is fatter (desirable)."""
+        returns = self.daily_returns
+        if len(returns) < 20:
+            return 1.0
+        arr = np.array(returns)
+        p95 = float(np.percentile(arr, 95))
+        p5 = abs(float(np.percentile(arr, 5)))
+        if p5 < 1e-10:
+            return float("inf") if p95 > 0 else 1.0
+        return p95 / p5
+
+    @property
+    def session_performance(self) -> dict[str, dict]:
+        """PnL breakdown by trading session (if trades have session info)."""
+        sessions: dict[str, list[float]] = {}
+        for trade in self._trades:
+            session = getattr(trade, "session", "UNKNOWN")
+            sessions.setdefault(session, []).append(trade.net_pnl)
+        result = {}
+        for session, pnls in sessions.items():
+            result[session] = {
+                "trades": len(pnls),
+                "net_pnl": sum(pnls),
+                "avg_pnl": float(mean(pnls)) if pnls else 0.0,
+                "win_rate": sum(1 for p in pnls if p > 0) / len(pnls) if pnls else 0.0,
+            }
+        return result
+
+    @property
     def profitability_score(self) -> float:
         if self.total_trades < 30 or self.net_profit <= 0.0 or self.expectancy <= 0.0:
             return 0.0
@@ -365,6 +421,10 @@ class PerformanceAnalyzer:
             "largest_win": self.largest_win,
             "largest_loss": self.largest_loss,
             "exit_reason_breakdown": self.exit_reason_breakdown,
+            "ulcer_index": self.ulcer_index,
+            "ulcer_performance_index": self.ulcer_performance_index,
+            "tail_ratio": self.tail_ratio,
+            "session_performance": self.session_performance,
             "profitability_score": self.profitability_score,
         }
 

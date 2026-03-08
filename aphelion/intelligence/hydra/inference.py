@@ -110,7 +110,7 @@ class HydraInference:
         if not Path(path).exists():
             raise FileNotFoundError(f"Checkpoint not found: {path}")
 
-        ckpt = torch.load(path, map_location=self._device)
+        ckpt = torch.load(path, map_location=self._device, weights_only=False)
         self._config = ckpt.get("ensemble_config", EnsembleConfig())
         
         self._model = HydraGate(self._config).to(self._device)

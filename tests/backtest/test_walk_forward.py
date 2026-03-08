@@ -4,8 +4,10 @@ from datetime import datetime, timezone
 
 from aphelion.backtest.walk_forward import (
     WalkForwardEngine, WalkForwardConfig, WalkForwardResults,
+    WalkForwardWindow,
 )
 from aphelion.backtest.engine import BacktestConfig
+from aphelion.backtest.metrics import BacktestMetrics
 from aphelion.backtest.order import Order, OrderType, OrderSide
 from aphelion.core.config import Timeframe
 from aphelion.core.data_layer import Bar, DataLayer
@@ -112,3 +114,112 @@ class TestWalkForward:
             prev = result.windows[i-1]
             curr = result.windows[i]
             assert curr.test_start_idx >= prev.test_end_idx
+
+
+class TestWalkForwardResultsProperties:
+    """Tests for the new overfit/summary/to_dict methods on WalkForwardResults."""
+
+    def _make_window(self, train_sharpe: float, test_sharpe: float,
+                     test_return: float = 1.0) -> WalkForwardWindow:
+        """Build a minimal window with train + test metrics stubs."""
+        train_m = BacktestMetrics(
+            total_trades=50,
+            total_return_pct=5.0,
+            sharpe=train_sharpe,
+            sortino=1.5,
+            max_drawdown_pct=8.0,
+            return_over_max_drawdown=0.625,
+            win_rate_pct=60.0,
+            profit_factor=1.5,
+            expectancy_dollars=30.0,
+            net_profit=500.0,
+            gross_profit=1500.0,
+            gross_loss=-1000.0,
+            profitability_score=0.55,
+            profitable_month_ratio=60.0,
+        )
+        test_m = BacktestMetrics(
+            total_trades=30,
+            total_return_pct=test_return,
+            sharpe=test_sharpe,
+            sortino=1.2,
+            max_drawdown_pct=10.0,
+            return_over_max_drawdown=0.5,
+            win_rate_pct=60.0,
+            profit_factor=1.4,
+            expectancy_dollars=20.0,
+            net_profit=300.0,
+            gross_profit=900.0,
+            gross_loss=-600.0,
+            profitability_score=0.50,
+            profitable_month_ratio=55.0,
+        )
+        return WalkForwardWindow(
+            window_index=0,
+            train_start_idx=0, train_end_idx=200,
+            test_start_idx=200, test_end_idx=300,
+            train_bars_count=200, test_bars_count=100,
+            train_metrics=train_m, test_metrics=test_m,
+        )
+
+    def test_overfit_ratio_no_windows(self):
+        r = WalkForwardResults(config=WalkForwardConfig())
+        assert r.overfit_ratio == 0.0
+
+    def test_overfit_ratio_near_one_no_overfit(self):
+        w = self._make_window(train_sharpe=1.2, test_sharpe=1.1)
+        r = WalkForwardResults(config=WalkForwardConfig(), windows=[w])
+        ratio = r.overfit_ratio
+        assert 0.9 < ratio < 1.3  # train/test Sharpe close
+
+    def test_overfit_ratio_high_means_overfit(self):
+        w = self._make_window(train_sharpe=3.0, test_sharpe=0.5)
+        r = WalkForwardResults(config=WalkForwardConfig(), windows=[w])
+        assert r.overfit_ratio > 4.0
+
+    def test_sharpe_decay_no_windows(self):
+        r = WalkForwardResults(config=WalkForwardConfig())
+        assert r.sharpe_decay == 0.0
+
+    def test_sharpe_decay_with_degradation(self):
+        w = self._make_window(train_sharpe=2.0, test_sharpe=1.0)
+        r = WalkForwardResults(config=WalkForwardConfig(), windows=[w])
+        # 50% decay: (2.0 - 1.0) / 2.0 * 100 = 50
+        assert r.sharpe_decay == pytest.approx(50.0, abs=0.1)
+
+    def test_sharpe_decay_zero_when_test_higher(self):
+        w = self._make_window(train_sharpe=1.0, test_sharpe=1.5)
+        r = WalkForwardResults(config=WalkForwardConfig(), windows=[w])
+        assert r.sharpe_decay == 0.0  # clamped to 0
+
+    def test_summary_string_format(self):
+        w = self._make_window(train_sharpe=1.5, test_sharpe=1.2)
+        r = WalkForwardResults(
+            config=WalkForwardConfig(),
+            windows=[w],
+            avg_oos_sharpe=1.2,
+            deployment_approved=False,
+            deployment_reason="TOO_FEW_TRADES: 30 < 500",
+        )
+        s = r.summary()
+        assert "WALK-FORWARD VALIDATION REPORT" in s
+        assert "Overfit Ratio" in s
+        assert "Sharpe Decay" in s
+        assert "APPROVED: NO" in s
+
+    def test_to_dict_contains_keys(self):
+        w = self._make_window(train_sharpe=1.5, test_sharpe=1.2)
+        r = WalkForwardResults(
+            config=WalkForwardConfig(),
+            windows=[w],
+            avg_oos_sharpe=1.2,
+            deployment_approved=True,
+            deployment_reason="APPROVED",
+        )
+        d = r.to_dict()
+        expected_keys = [
+            "num_windows", "total_oos_trades", "avg_oos_sharpe",
+            "overfit_ratio", "sharpe_decay", "deployment_approved",
+        ]
+        for key in expected_keys:
+            assert key in d, f"Missing key: {key}"

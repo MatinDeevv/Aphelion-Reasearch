@@ -133,6 +133,7 @@ class FeatureEngine:
         closes = df["close"].values
         highs = df["high"].values
         lows = df["low"].values
+        volumes = df["volume"].values if "volume" in df.columns else np.ones(len(closes))
 
         features = {}
 
@@ -157,6 +158,26 @@ class FeatureEngine:
             features["ema_20"] = self._ema(closes, 20)
             features["ema_50"] = self._ema(closes, 50)
             features["ema_cross"] = 1 if features["ema_20"] > features["ema_50"] else -1
+
+        # MACD (12, 26, 9)
+        if len(closes) >= 35:
+            features.update(self._compute_macd(closes))
+
+        # Stochastic %K / %D (14, 3)
+        if len(closes) >= 17:
+            features.update(self._compute_stochastic(highs, lows, closes))
+
+        # ADX (14-period)
+        if len(df) >= 28:
+            features["adx"] = self._compute_adx(highs, lows, closes, period=14)
+
+        # OBV (On-Balance Volume)
+        if len(closes) >= 2:
+            features["obv"] = self._compute_obv(closes, volumes)
+
+        # Rate of Change (10-period)
+        if len(closes) >= 11:
+            features["roc_10"] = ((closes[-1] - closes[-11]) / closes[-11]) * 100.0
 
         return features
 
@@ -216,3 +237,116 @@ class FeatureEngine:
         for price in data[1:]:
             ema = (price - ema) * multiplier + ema
         return float(ema)
+
+    @staticmethod
+    def _compute_macd(closes: np.ndarray,
+                      fast: int = 12, slow: int = 26, signal: int = 9) -> dict:
+        """MACD line, signal line, and histogram."""
+        def _ema_series(arr: np.ndarray, period: int) -> np.ndarray:
+            mult = 2.0 / (period + 1)
+            out = np.empty_like(arr, dtype=float)
+            out[0] = arr[0]
+            for i in range(1, len(arr)):
+                out[i] = (arr[i] - out[i - 1]) * mult + out[i - 1]
+            return out
+
+        ema_fast = _ema_series(closes, fast)
+        ema_slow = _ema_series(closes, slow)
+        macd_line = ema_fast - ema_slow
+        signal_line = _ema_series(macd_line, signal)
+        histogram = macd_line - signal_line
+
+        return {
+            "macd_line": float(macd_line[-1]),
+            "macd_signal": float(signal_line[-1]),
+            "macd_histogram": float(histogram[-1]),
+        }
+
+    @staticmethod
+    def _compute_stochastic(highs: np.ndarray, lows: np.ndarray,
+                            closes: np.ndarray,
+                            k_period: int = 14, d_period: int = 3) -> dict:
+        """Stochastic %K and %D."""
+        n = len(closes)
+        k_values = []
+        for i in range(k_period - 1, n):
+            high_n = np.max(highs[i - k_period + 1:i + 1])
+            low_n = np.min(lows[i - k_period + 1:i + 1])
+            if high_n == low_n:
+                k_values.append(50.0)
+            else:
+                k_values.append(((closes[i] - low_n) / (high_n - low_n)) * 100.0)
+
+        k_arr = np.array(k_values)
+        if len(k_arr) >= d_period:
+            d_val = float(np.mean(k_arr[-d_period:]))
+        else:
+            d_val = float(k_arr[-1]) if len(k_arr) > 0 else 50.0
+
+        return {
+            "stoch_k": float(k_arr[-1]) if len(k_arr) > 0 else 50.0,
+            "stoch_d": d_val,
+        }
+
+    @staticmethod
+    def _compute_adx(highs: np.ndarray, lows: np.ndarray,
+                     closes: np.ndarray, period: int = 14) -> float:
+        """Average Directional Index."""
+        n = len(highs)
+        if n < 2 * period:
+            return 0.0
+
+        up_moves = highs[1:] - highs[:-1]
+        down_moves = lows[:-1] - lows[1:]
+
+        plus_dm = np.where((up_moves > down_moves) & (up_moves > 0), up_moves, 0.0)
+        minus_dm = np.where((down_moves > up_moves) & (down_moves > 0), down_moves, 0.0)
+
+        tr_vals = np.maximum(
+            highs[1:] - lows[1:],
+            np.maximum(
+                np.abs(highs[1:] - closes[:-1]),
+                np.abs(lows[1:] - closes[:-1]),
+            ),
+        )
+
+        # Wilder smoothing
+        atr_sum = np.sum(tr_vals[:period])
+        pdm_sum = np.sum(plus_dm[:period])
+        mdm_sum = np.sum(minus_dm[:period])
+
+        dx_list = []
+        for i in range(period, len(tr_vals)):
+            atr_sum = atr_sum - atr_sum / period + tr_vals[i]
+            pdm_sum = pdm_sum - pdm_sum / period + plus_dm[i]
+            mdm_sum = mdm_sum - mdm_sum / period + minus_dm[i]
+
+            if atr_sum == 0:
+                dx_list.append(0.0)
+                continue
+            plus_di = 100.0 * pdm_sum / atr_sum
+            minus_di = 100.0 * mdm_sum / atr_sum
+            di_sum = plus_di + minus_di
+            if di_sum == 0:
+                dx_list.append(0.0)
+            else:
+                dx_list.append(100.0 * abs(plus_di - minus_di) / di_sum)
+
+        if not dx_list:
+            return 0.0
+        # Smooth DX → ADX
+        adx = np.mean(dx_list[:period]) if len(dx_list) >= period else np.mean(dx_list)
+        for i in range(period, len(dx_list)):
+            adx = (adx * (period - 1) + dx_list[i]) / period
+        return float(adx)
+
+    @staticmethod
+    def _compute_obv(closes: np.ndarray, volumes: np.ndarray) -> float:
+        """On-Balance Volume (last value)."""
+        obv = 0.0
+        for i in range(1, len(closes)):
+            if closes[i] > closes[i - 1]:
+                obv += volumes[i]
+            elif closes[i] < closes[i - 1]:
+                obv -= volumes[i]
+        return float(obv)
