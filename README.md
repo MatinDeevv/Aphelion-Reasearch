@@ -11,7 +11,7 @@ APHELION uses a 5-tier governance hierarchy where modules vote on trade decision
 | **Sovereign** | System Core | - | Event Bus, Clock, Registry |
 | **Council** | Strategic Decision | 100 | OLYMPUS, SENTINEL, ARES |
 | **Minister** | Intelligence | 40 | HYDRA, PROMETHEUS, PHANTOM, NEMESIS, FORGE, ATLAS, DATA |
-| **Commander** | Execution | 10 | VENOM, REAPER, APEX, WRAITH, SHADOW, KRONOS, ECHO, CASSANDRA, ORACLE, TITAN, GHOST |
+| **Commander** | Execution | 10 | BACKTEST, VENOM, REAPER, APEX, WRAITH, SHADOW, KRONOS, ECHO, CASSANDRA, ORACLE, TITAN, GHOST |
 | **Operator** | Support | 1 | FUND |
 
 ### Module Overview
@@ -27,6 +27,7 @@ NEMESIS      War Simulator (7 Gauntlet levels)
 FORGE        Online Learning (MAML)
 ATLAS        Macro Intelligence
 DATA         Data Layer & 60+ Features
+BACKTEST     Backtesting Engine & Monte Carlo
 VENOM        Statistical Arbitrage (Cointegration)
 REAPER       Momentum/Trend Following
 APEX         Breakout Detection
@@ -71,6 +72,13 @@ tests/
   - **Multi-Timeframe** -- Alignment scoring across M1, M5, M15, H1 with weighted consensus
   - **Cointegration** -- Engle-Granger tests for XAU vs DXY, real yields, silver; spread z-scores
 - 127 unit tests passing
+
+**Phase 1 fixes (pre-Phase 2 hardening):**
+
+- **Cointegration ADF test** (`aphelion/features/cointegration.py`) — replaced hand-rolled `_adf_test_simple()` (hardcoded MacKinnon critical values, bucketed p-values) with `statsmodels.tsa.stattools.adfuller`. Real MacKinnon p-values are now returned via `result[1]`.
+- **Clock session features** (`aphelion/core/clock.py`) — added `"is_trading_session"` key to the dict returned by `session_features()`. The method already existed; it was simply missing from the output.
+- **BACKTEST module registration** (`aphelion/core/config.py`) — added `BACKTEST` (Tier.COMMANDER, "Backtesting Engine & Monte Carlo") to the `MODULES` dict, placed alphabetically among Commanders. Required by Phase 3.
+- **DataLayer file loaders** (`aphelion/core/data_layer.py`) — added `load_from_parquet(filepath, timeframe)` and `load_from_csv(filepath, timeframe)`. Both validate required columns (`timestamp`, `open`, `high`, `low`, `close`, `volume`, `tick_volume`, `spread`), raise `ValueError` on missing columns, and return a `DataFrame` without touching `self._bars`. The CSV loader parses `timestamp` as UTC-aware datetime. These methods are the entry points for the Phase 3 backtester.
 
 ### Build Phases
 
@@ -179,6 +187,7 @@ Async pub/sub messaging with priority dispatch:
 - Aggregates raw ticks into OHLCV bars across 4 timeframes (M1, M5, M15, H1)
 - Validates data quality: rejects negative prices, crossed spreads, >50 pip spreads, >5% price jumps
 - Graceful fallback when MT5 is unavailable (development mode)
+- `load_from_parquet(filepath, timeframe)` and `load_from_csv(filepath, timeframe)` for offline/backtest data loading (Phase 3)
 
 ## License
 
