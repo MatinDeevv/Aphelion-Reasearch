@@ -22,3 +22,12 @@
 {"ts": "2026-03-08T21:48:44.800806+00:00", "session": "test_summary", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_summary", "ledger_path": "logs\\paper\\paper_test_summary.jsonl"}}
 {"ts": "2026-03-08T21:48:44.801084+00:00", "session": "test_summary", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
 {"ts": "2026-03-08T21:48:44.810545+00:00", "session": "test_summary", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 10, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0}}
+{"ts": "2026-03-08T22:28:56.350053+00:00", "session": "test_summary", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_summary", "ledger_path": "logs\\paper\\paper_test_summary.jsonl"}}
+{"ts": "2026-03-08T22:28:56.350298+00:00", "session": "test_summary", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
+{"ts": "2026-03-08T22:28:56.362098+00:00", "session": "test_summary", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 10, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0}}
+{"ts": "2026-03-08T22:30:01.628530+00:00", "session": "test_summary", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_summary", "ledger_path": "logs\\paper\\paper_test_summary.jsonl"}}
+{"ts": "2026-03-08T22:30:01.628897+00:00", "session": "test_summary", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
+{"ts": "2026-03-08T22:30:01.642017+00:00", "session": "test_summary", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 10, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0}}
+{"ts": "2026-03-08T22:32:32.496807+00:00", "session": "test_summary", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_summary", "ledger_path": "logs\\paper\\paper_test_summary.jsonl"}}
+{"ts": "2026-03-08T22:32:32.497317+00:00", "session": "test_summary", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
+{"ts": "2026-03-08T22:32:32.521494+00:00", "session": "test_summary", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 10, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0}}

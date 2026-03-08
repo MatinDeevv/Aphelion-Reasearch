@@ -145,10 +145,11 @@ class MonteCarloEngine:
             else:
                 pf = wins / losses
             path_profit_factors[path_i] = min(pf, 10.0)
-            equity = initial_capital
-            for step_i, pnl in enumerate(sampled, start=1):
-                equity = max(0.0, equity + float(pnl))
-                all_equity[path_i, step_i] = equity
+            # Vectorized equity path (replaces Python inner loop)
+            cum_pnl = np.cumsum(sampled)
+            equity_path = initial_capital + cum_pnl
+            equity_path = np.maximum(equity_path, 0.0)
+            all_equity[path_i, 1:] = equity_path
 
         p5_curve = np.percentile(all_equity, 5, axis=0).tolist()
         p50_curve = np.percentile(all_equity, 50, axis=0).tolist()
@@ -162,8 +163,11 @@ class MonteCarloEngine:
 
         mdds = np.zeros(n_paths, dtype=np.float64)
         for path_i in range(n_paths):
-            dd, _, _ = max_drawdown(all_equity[path_i].tolist())
-            mdds[path_i] = dd * 100.0
+            # Vectorized max drawdown per path
+            equity_path = all_equity[path_i]
+            running_max = np.maximum.accumulate(equity_path)
+            drawdowns = np.where(running_max > 0, (running_max - equity_path) / running_max, 0.0)
+            mdds[path_i] = float(np.max(drawdowns)) * 100.0
 
         p5_mdd = float(np.percentile(mdds, 5))
         p50_mdd = float(np.percentile(mdds, 50))

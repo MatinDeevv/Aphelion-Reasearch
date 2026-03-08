@@ -1,9 +1,11 @@
 """
 APHELION Data Layer
 MT5 tick stream → clean OHLCV bars with data quality validation.
+Includes gap detection, staleness tracking, configurable thresholds.
 """
 
 import asyncio
+import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -12,6 +14,8 @@ from typing import Optional, Callable
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 from aphelion.core.config import Timeframe, SYMBOL, EventTopic
 from aphelion.core.event_bus import EventBus, Event, Priority
@@ -136,12 +140,24 @@ class BarAggregator:
 
 
 class DataQualityValidator:
-    """Validates data integrity on every bar."""
+    """Validates data integrity on every bar.
 
-    def __init__(self):
+    Configurable thresholds for spread, price jump, and gap detection.
+    """
+
+    def __init__(
+        self,
+        max_spread: float = 50.0,
+        max_price_jump_pct: float = 0.05,
+        max_gap_seconds: float = 120.0,
+    ):
         self._last_prices: deque = deque(maxlen=100)
+        self._last_tick_time: float = 0.0
         self._gap_count = 0
         self._invalid_count = 0
+        self._max_spread = max_spread
+        self._max_price_jump_pct = max_price_jump_pct
+        self._max_gap_seconds = max_gap_seconds
 
     def validate_tick(self, tick: Tick) -> tuple[bool, Optional[str]]:
         if tick.bid <= 0 or tick.ask <= 0:
@@ -152,16 +168,24 @@ class DataQualityValidator:
             self._invalid_count += 1
             return False, "Ask < Bid (crossed spread)"
 
-        if tick.spread > 50.0:  # 50 pip spread = likely bad data
+        if tick.spread > self._max_spread:
             self._invalid_count += 1
             return False, f"Spread too wide: {tick.spread}"
 
         if self._last_prices:
             last = self._last_prices[-1]
             pct_change = abs(tick.last - last) / last
-            if pct_change > 0.05:  # 5% move in single tick
+            if pct_change > self._max_price_jump_pct:
                 self._invalid_count += 1
                 return False, f"Price jump: {pct_change:.2%}"
+
+        # Gap detection: detect time gaps between ticks
+        if self._last_tick_time > 0:
+            gap = tick.timestamp - self._last_tick_time
+            if gap > self._max_gap_seconds:
+                self._gap_count += 1
+                logger.warning("Data gap detected: %.1fs between ticks", gap)
+        self._last_tick_time = tick.timestamp
 
         self._last_prices.append(tick.last)
         return True, None
@@ -191,10 +215,21 @@ class DataLayer:
     bar aggregation, and quality validation.
     """
 
-    def __init__(self, event_bus: EventBus, symbol: str = SYMBOL):
+    def __init__(
+        self,
+        event_bus: EventBus,
+        symbol: str = SYMBOL,
+        max_spread: float = 50.0,
+        max_price_jump_pct: float = 0.05,
+        max_gap_seconds: float = 120.0,
+    ):
         self.event_bus = event_bus
         self.symbol = symbol
-        self._validator = DataQualityValidator()
+        self._validator = DataQualityValidator(
+            max_spread=max_spread,
+            max_price_jump_pct=max_price_jump_pct,
+            max_gap_seconds=max_gap_seconds,
+        )
         self._aggregators = {tf: BarAggregator(tf) for tf in Timeframe}
         self._tick_buffer: deque[Tick] = deque(maxlen=50_000)
         self._bars: dict[Timeframe, deque[Bar]] = {
@@ -202,6 +237,7 @@ class DataLayer:
         }
         self._connected = False
         self._tick_count = 0
+        self._last_tick_time: float = 0.0  # for staleness detection
         self._mt5 = None
 
     async def connect(self) -> bool:
@@ -231,6 +267,7 @@ class DataLayer:
 
         self._tick_buffer.append(tick)
         self._tick_count += 1
+        self._last_tick_time = time.time()
 
         # Publish raw tick event
         self.event_bus.publish_nowait(Event(
@@ -291,28 +328,62 @@ class DataLayer:
         df.rename(columns={"time": "timestamp", "real_volume": "volume"}, inplace=True)
         return df
 
-    def load_from_parquet(self, filepath: str, timeframe: Timeframe) -> pd.DataFrame:
-        """Load bar data from a Parquet file. Returns DataFrame (does not populate self._bars)."""
+    def load_from_parquet(self, filepath: str, timeframe: Timeframe, populate: bool = True) -> pd.DataFrame:
+        """Load bar data from a Parquet file. Optionally populates internal bar buffer."""
         required = {"timestamp", "open", "high", "low", "close", "volume", "tick_volume", "spread"}
         df = pd.read_parquet(filepath)
         missing = required - set(df.columns)
         if missing:
             raise ValueError(f"Missing required columns: {missing}")
+        if populate:
+            self._populate_bars(df, timeframe)
         return df
 
-    def load_from_csv(self, filepath: str, timeframe: Timeframe) -> pd.DataFrame:
-        """Load bar data from a CSV file. Returns DataFrame (does not populate self._bars)."""
+    def load_from_csv(self, filepath: str, timeframe: Timeframe, populate: bool = True) -> pd.DataFrame:
+        """Load bar data from a CSV file. Optionally populates internal bar buffer."""
         required = {"timestamp", "open", "high", "low", "close", "volume", "tick_volume", "spread"}
         df = pd.read_csv(filepath)
         missing = required - set(df.columns)
         if missing:
             raise ValueError(f"Missing required columns: {missing}")
         df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        if populate:
+            self._populate_bars(df, timeframe)
         return df
+
+    def _populate_bars(self, df: pd.DataFrame, timeframe: Timeframe) -> None:
+        """Convert DataFrame rows into Bar objects and populate internal buffer."""
+        bars_deque = self._bars[timeframe]
+        for _, row in df.iterrows():
+            bar = Bar(
+                timestamp=pd.Timestamp(row["timestamp"]),
+                timeframe=timeframe,
+                open=float(row["open"]),
+                high=float(row["high"]),
+                low=float(row["low"]),
+                close=float(row["close"]),
+                volume=float(row["volume"]),
+                tick_volume=int(row.get("tick_volume", 0)),
+                spread=float(row.get("spread", 0.0)),
+                is_complete=True,
+            )
+            bars_deque.append(bar)
 
     @property
     def is_connected(self) -> bool:
         return self._connected
+
+    def staleness_seconds(self) -> float:
+        """Seconds since last tick was received. 0 if no ticks yet."""
+        if self._last_tick_time <= 0:
+            return 0.0
+        return time.time() - self._last_tick_time
+
+    def is_stale(self, threshold_seconds: float = 60.0) -> bool:
+        """True if no tick received for more than threshold_seconds."""
+        if self._last_tick_time <= 0:
+            return False  # No data yet, not stale
+        return self.staleness_seconds() > threshold_seconds
 
     @property
     def stats(self) -> dict:
@@ -322,4 +393,5 @@ class DataLayer:
             "buffer_size": len(self._tick_buffer),
             "bars": {tf.value: len(bars) for tf, bars in self._bars.items()},
             "quality": self._validator.stats,
+            "staleness_seconds": round(self.staleness_seconds(), 1),
         }

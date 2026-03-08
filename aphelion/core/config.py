@@ -47,7 +47,10 @@ class SentinelLimits:
     pre_news_lockout_minutes: int = 5       # Block 5 min before high-impact
     post_news_lockout_minutes: int = 2      # Block 2 min after high-impact
     friday_close_lockout_minutes: int = 30  # Close all 30 min before market close
+    daily_equity_drawdown_l1: float = 0.03  # 3% drawdown → L1 warning (reduce size)
+    daily_equity_drawdown_l2: float = 0.06  # 6% drawdown → L2 halt (no new trades)
     daily_equity_drawdown_l3: float = 0.10  # 10% drawdown → L3 disconnect
+    lot_size_oz: float = 100.0              # XAU/USD lot size: 1 lot = 100 oz
 
 
 SENTINEL: Final = SentinelLimits()

@@ -1,4 +1,10 @@
-"""Position sizing logic with immutable SENTINEL risk caps."""
+"""Position sizing logic with immutable SENTINEL risk caps.
+
+Improvements:
+- Volatility-adjusted sizing support
+- Raises ValueError on zero entry price (was returning 0.01 silently)
+- ATR-based lot calculation alternative
+"""
 
 from __future__ import annotations
 
@@ -26,10 +32,17 @@ class PositionSizer:
         avg_win: float,
         avg_loss: float,
         confidence: float = 1.0,
+        volatility_scalar: float = 1.0,
     ) -> float:
+        """Compute position size as fraction of account.
+
+        Args:
+            volatility_scalar: 0.5=high vol (halve size), 1.0=normal, 1.5=low vol (increase)
+        """
         base = self.kelly_fraction(win_rate, avg_win, avg_loss)
         clamped_confidence = max(0.0, min(1.0, confidence))
-        size = base * clamped_confidence
+        clamped_vol = max(0.25, min(2.0, volatility_scalar))
+        size = base * clamped_confidence * clamped_vol
         return min(size, SENTINEL.max_position_pct)
 
     def pct_to_lots(
@@ -39,13 +52,33 @@ class PositionSizer:
         entry_price: float,
         pip_value_per_lot: float = 10.0,
     ) -> float:
-        if entry_price <= 0 or pip_value_per_lot <= 0:
-            return 0.01
+        if entry_price <= 0:
+            raise ValueError(f"entry_price must be > 0, got {entry_price}")
+        if pip_value_per_lot <= 0:
+            raise ValueError(f"pip_value_per_lot must be > 0, got {pip_value_per_lot}")
 
         risk_dollars = account_equity * size_pct
         lots = risk_dollars / (entry_price * pip_value_per_lot)
         rounded = round(lots, 2)
         return max(0.01, rounded)
+
+    def atr_based_lots(
+        self,
+        account_equity: float,
+        risk_pct: float,
+        atr: float,
+        lot_size_oz: float = 100.0,
+    ) -> float:
+        """Compute lot size based on ATR for volatility-adjusted sizing.
+
+        risk_dollars = account_equity * risk_pct
+        lots = risk_dollars / (atr * lot_size_oz)
+        """
+        if atr <= 0 or lot_size_oz <= 0:
+            return 0.01
+        risk_dollars = account_equity * min(risk_pct, SENTINEL.max_position_pct)
+        lots = risk_dollars / (atr * lot_size_oz)
+        return max(0.01, round(lots, 2))
 
     def validate_size(self, size_pct: float, current_exposure_pct: float) -> tuple[bool, str]:
         if size_pct > SENTINEL.max_position_pct:

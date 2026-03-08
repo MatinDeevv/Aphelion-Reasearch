@@ -14,6 +14,7 @@ class MicrostructureState:
     """Rolling state for microstructure computation."""
     vpin: float = 0.0
     ofi: float = 0.0
+    ofi_normalized: float = 0.0
     tick_entropy: float = 0.0
     hawkes_buy_intensity: float = 0.0
     hawkes_sell_intensity: float = 0.0
@@ -59,8 +60,15 @@ class VPINCalculator:
         if self._current_bucket_volume >= self._bucket_size:
             sell_vol = self._current_bucket_volume - self._current_buy_volume
             self._buckets.append((self._current_buy_volume, sell_vol))
-            self._current_bucket_volume = 0.0
-            self._current_buy_volume = 0.0
+            # Handle overflow: carry excess volume to next bucket
+            overflow = self._current_bucket_volume - self._bucket_size
+            if overflow > 0:
+                overflow_buy = buy_vol * (overflow / volume) if volume > 0 else 0
+                self._current_bucket_volume = overflow
+                self._current_buy_volume = overflow_buy
+            else:
+                self._current_bucket_volume = 0.0
+                self._current_buy_volume = 0.0
 
         return self._compute()
 
@@ -124,6 +132,17 @@ class OFICalculator:
 
         return sum(self._ofi_values)
 
+    @property
+    def normalized(self) -> float:
+        """OFI normalized to [-1, 1] range using window max."""
+        raw = sum(self._ofi_values)
+        if not self._ofi_values:
+            return 0.0
+        abs_max = max(abs(v) for v in self._ofi_values)
+        if abs_max == 0:
+            return 0.0
+        return max(-1.0, min(1.0, raw / (abs_max * len(self._ofi_values))))
+
 
 class TickEntropyCalculator:
     """
@@ -168,28 +187,38 @@ class TickEntropyCalculator:
 class HawkesIntensity:
     """
     Self-exciting Hawkes process for buy/sell order arrival.
-    Accelerating intensity = accumulation/distribution.
+    Uses O(1) recursive update instead of O(n) sum over all events.
     """
 
     def __init__(self, decay: float = 0.1, baseline: float = 1.0):
         self._decay = decay
         self._baseline = baseline
-        self._events: deque[float] = deque(maxlen=1000)
+        self._recursive_sum: float = 0.0  # R(t) = sum of exp(-decay * (t - t_i))
+        self._last_event_time: float = 0.0
+        self._event_count: int = 0
         self._intensity = baseline
 
     def update(self, timestamp: float) -> float:
-        """Record an event and return current intensity."""
-        self._events.append(timestamp)
-        self._intensity = self._compute(timestamp)
+        """Record an event and return current intensity. O(1) per call."""
+        if self._event_count > 0:
+            dt = timestamp - self._last_event_time
+            # Decay the recursive sum, then add +1 for this new event
+            self._recursive_sum = self._recursive_sum * np.exp(-self._decay * max(dt, 0)) + 1.0
+        else:
+            self._recursive_sum = 1.0
+
+        self._last_event_time = timestamp
+        self._event_count += 1
+        self._intensity = self._baseline + self._recursive_sum
         return self._intensity
 
-    def _compute(self, t: float) -> float:
-        intensity = self._baseline
-        for event_time in self._events:
-            dt = t - event_time
-            if dt > 0:
-                intensity += np.exp(-self._decay * dt)
-        return intensity
+    def current(self, timestamp: float) -> float:
+        """Query intensity at a given time without recording an event."""
+        if self._event_count == 0:
+            return self._baseline
+        dt = timestamp - self._last_event_time
+        decayed = self._recursive_sum * np.exp(-self._decay * max(dt, 0))
+        return self._baseline + decayed
 
     @property
     def intensity(self) -> float:
@@ -218,7 +247,9 @@ class MicrostructureEngine:
         self._state.vpin = self._vpin.update(last_price, volume)
 
         # OFI
-        self._state.ofi = self._ofi.update(bid, ask, bid_size, ask_size)
+        raw_ofi = self._ofi.update(bid, ask, bid_size, ask_size)
+        self._state.ofi = raw_ofi
+        self._state.ofi_normalized = self._ofi.normalized
 
         # Tick Entropy
         self._state.tick_entropy = self._entropy.update(last_price)
@@ -255,6 +286,7 @@ class MicrostructureEngine:
         return {
             "vpin": self._state.vpin,
             "ofi": self._state.ofi,
+            "ofi_normalized": self._state.ofi_normalized,
             "tick_entropy": self._state.tick_entropy,
             "hawkes_buy_intensity": self._state.hawkes_buy_intensity,
             "hawkes_sell_intensity": self._state.hawkes_sell_intensity,

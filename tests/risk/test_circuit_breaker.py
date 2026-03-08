@@ -14,16 +14,16 @@ class TestCircuitBreaker:
     def test_l1_triggers_at_5pct(self):
         cb = CircuitBreaker(EventBus())
         cb.update(10000.0)
-        cb.update(9450.0)  # 5.5% drawdown
+        cb.update(9650.0)  # 3.5% drawdown → L1 (threshold 3%)
         assert cb.state == "L1"
         assert cb.size_multiplier == 0.50
 
     def test_l2_triggers_at_7_5pct(self):
         cb = CircuitBreaker(EventBus())
         cb.update(10000.0)
-        cb.update(9200.0)  # 8% drawdown
+        cb.update(9200.0)  # 8% drawdown → L2 (threshold 6%)
         assert cb.state == "L2"
-        assert cb.size_multiplier == 0.25
+        assert cb.size_multiplier == 0.0  # L2 = halt, no new trades
 
     def test_l3_triggers_at_10pct(self):
         cb = CircuitBreaker(EventBus())
@@ -45,7 +45,7 @@ class TestCircuitBreaker:
     def test_reset_from_l1(self):
         cb = CircuitBreaker(EventBus())
         cb.update(10000.0)
-        cb.update(9450.0)  # L1
+        cb.update(9650.0)  # L1 (3.5% dd > 3% threshold)
         assert cb.state == "L1"
         cb.update(10100.0)  # Recovery - new peak, 0% dd
         assert cb.state == "NORMAL"
@@ -60,7 +60,7 @@ class TestCircuitBreaker:
     def test_apply_multiplier_scales_size(self):
         cb = CircuitBreaker(EventBus())
         cb.update(10000.0)
-        cb.update(9450.0)  # L1 → 50%
+        cb.update(9650.0)  # L1 → 50% (3.5% dd > 3% threshold)
         result = cb.apply_multiplier(0.02)
         assert result == pytest.approx(0.01, abs=0.001)
 

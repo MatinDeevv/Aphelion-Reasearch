@@ -1,8 +1,11 @@
 """
 APHELION Market Clock
 Session detection, news calendar, trading hour management.
+DST-aware for London/New York session shifts.
 """
 
+import bisect
+import math
 import time
 from datetime import datetime, timezone, timedelta
 from typing import Optional
@@ -18,9 +21,18 @@ class MarketClock:
 
     def __init__(self):
         self._news_calendar: list[dict] = []
+        self._news_times: list[datetime] = []  # sorted high-impact times for bisect
         self._market_close_friday_utc = (21, 0)  # Friday 21:00 UTC
         self._market_open_sunday_utc = (22, 0)    # Sunday 22:00 UTC
         self._simulated_time: Optional[datetime] = None  # FIXED: backtest clock override
+        self._dst_offset_london: int = 0   # 0 in winter, -60 in summer (sessions shift earlier)
+        self._dst_offset_ny: int = 0       # 0 in winter, -60 in summer
+
+    def set_dst_offsets(self, london_minutes: int = 0, ny_minutes: int = 0) -> None:
+        """Set DST offsets for session window adjustments.
+        In summer: London opens at 07:00 UTC (offset -60), NY opens 12:30 UTC (offset -60)."""
+        self._dst_offset_london = london_minutes
+        self._dst_offset_ny = ny_minutes
 
     def set_simulated_time(self, dt: Optional[datetime]) -> None:
         """Override now_utc() for deterministic backtesting."""
@@ -86,9 +98,22 @@ class MarketClock:
         return float('inf')
 
     def minutes_to_close(self, dt: Optional[datetime] = None) -> float:
+        """Minutes to current session close. Returns minutes to next session open if in DEAD_ZONE."""
         dt = dt or self.now_utc()
         session = self.current_session(dt)
         current_minutes = dt.hour * 60 + dt.minute
+
+        if session == Session.DEAD_ZONE:
+            # Return minutes to next session open
+            best = float('inf')
+            for window in SESSION_WINDOWS:
+                open_min = window.open_hour * 60 + window.open_minute
+                diff = open_min - current_minutes
+                if diff < 0:
+                    diff += 24 * 60
+                if diff > 0:
+                    best = min(best, diff)
+            return best
 
         for window in SESSION_WINDOWS:
             if window.name == session:
@@ -110,6 +135,10 @@ class MarketClock:
     def set_news_calendar(self, events: list[dict]) -> None:
         """Set news calendar. Each event: {'time': datetime, 'impact': 'HIGH'|'MED'|'LOW', 'name': str}"""
         self._news_calendar = sorted(events, key=lambda e: e["time"])
+        # Pre-build sorted high-impact times for O(log n) lockout check
+        self._news_times = [
+            e["time"] for e in self._news_calendar if e.get("impact") == "HIGH"
+        ]
 
     def next_high_impact_news(self, dt: Optional[datetime] = None) -> Optional[dict]:
         dt = dt or self.now_utc()
@@ -127,15 +156,22 @@ class MarketClock:
         return delta
 
     def is_news_lockout(self, dt: Optional[datetime] = None) -> bool:
+        """Check if in a news lockout window. Uses binary search for O(log n) performance."""
         dt = dt or self.now_utc()
-        for event in self._news_calendar:
-            if event.get("impact") != "HIGH":
-                continue
-            event_time = event["time"]
-            pre_lockout = event_time - timedelta(minutes=SENTINEL.pre_news_lockout_minutes)
-            post_lockout = event_time + timedelta(minutes=SENTINEL.post_news_lockout_minutes)
-            if pre_lockout <= dt <= post_lockout:
-                return True
+        if not self._news_times:
+            return False
+        pre_mins = SENTINEL.pre_news_lockout_minutes
+        post_mins = SENTINEL.post_news_lockout_minutes
+        # Binary search: find nearest high-impact event
+        idx = bisect.bisect_right(self._news_times, dt)
+        # Check the event just before and just after the current time
+        for i in (idx - 1, idx):
+            if 0 <= i < len(self._news_times):
+                event_time = self._news_times[i]
+                pre_lockout = event_time - timedelta(minutes=pre_mins)
+                post_lockout = event_time + timedelta(minutes=post_mins)
+                if pre_lockout <= dt <= post_lockout:
+                    return True
         return False
 
     def last_high_impact_news_minutes(self, dt: Optional[datetime] = None) -> float:
@@ -155,17 +191,42 @@ class MarketClock:
         return (dt.day - 1) // 7 + 1
 
     def is_month_end(self, dt: Optional[datetime] = None) -> bool:
+        """True if within last 2 business days of the month."""
         dt = dt or self.now_utc()
         next_month = (dt.replace(day=28) + timedelta(days=4)).replace(day=1)
         days_remaining = (next_month - dt).days
-        return days_remaining <= 2
+        # Account for weekends: if remaining days include only weekends, still month-end
+        if days_remaining <= 2:
+            return True
+        # Check if remaining working days <= 2
+        working_days = 0
+        check = dt + timedelta(days=1)
+        while check < next_month:
+            if check.weekday() < 5:  # Mon-Fri
+                working_days += 1
+            check += timedelta(days=1)
+        return working_days <= 2
 
     def is_quarter_end(self, dt: Optional[datetime] = None) -> bool:
         dt = dt or self.now_utc()
         return dt.month in (3, 6, 9, 12) and self.is_month_end(dt)
 
     def session_features(self, dt: Optional[datetime] = None) -> dict:
+        """Return session-aware features including cyclical time encoding for ML models."""
         dt = dt or self.now_utc()
+        hour = dt.hour
+        minute = dt.minute
+        day_of_week = dt.weekday()  # 0=Mon, 6=Sun
+        day_of_month = dt.day
+
+        # Cyclical encoding — maps time features onto unit circle for continuity
+        hour_sin = math.sin(2 * math.pi * hour / 24)
+        hour_cos = math.cos(2 * math.pi * hour / 24)
+        dow_sin = math.sin(2 * math.pi * day_of_week / 7)
+        dow_cos = math.cos(2 * math.pi * day_of_week / 7)
+        dom_sin = math.sin(2 * math.pi * day_of_month / 31)
+        dom_cos = math.cos(2 * math.pi * day_of_month / 31)
+
         return {
             "session": self.current_session(dt).name,
             "minutes_to_london_open": self.minutes_to_session(Session.LONDON, dt),
@@ -181,4 +242,11 @@ class MarketClock:
             "is_news_lockout": self.is_news_lockout(dt),
             "market_open": self.is_market_open(dt),
             "is_trading_session": self.is_trading_session(dt),
+            # Cyclical time encoding for ML
+            "hour_sin": hour_sin,
+            "hour_cos": hour_cos,
+            "dow_sin": dow_sin,
+            "dow_cos": dow_cos,
+            "dom_sin": dom_sin,
+            "dom_cos": dom_cos,
         }

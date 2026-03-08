@@ -90,11 +90,11 @@ class TestSentinelIntegration:
         stack = _make_stack()
         cb = stack["cb"]
         cb.update(10000.0)
-        cb.update(9200.0)  # 8% drawdown → L2
+        cb.update(9200.0)  # 8% drawdown → L2 (halt, no new trades)
         assert cb.state == "L2"
-        assert cb.size_multiplier == 0.25
+        assert cb.size_multiplier == 0.0  # L2 = full halt, no new trades
         result = cb.apply_multiplier(0.02)
-        assert result == pytest.approx(0.005, abs=0.001)
+        assert result == pytest.approx(0.0, abs=0.001)
 
     def test_sl_breach_publishes_critical_event(self):
         stack = _make_stack()
