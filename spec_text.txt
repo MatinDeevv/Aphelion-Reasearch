@@ -1,0 +1,1636 @@
+⚡
+APHELION
+AUTONOMOUS TRADING SYSTEM
+Engineering Specification v1.0
+CLASSIFICATION: CONFIDENTIAL
+This document is the exclusive property of the APHELION project.
+Distribution is strictly prohibited without written authorization.
+FIELD
+DETAIL
+Project Name
+APHELION Autonomous Trading System
+Document Type
+Full Engineering Specification
+Version
+1.0 — Initial Release
+Market
+XAU/USD (Gold) — Primary
+Platform
+GCP VM — NVIDIA L4 GPU, 128GB RAM, 32 CPU Cores
+Broker
+MetaTrader 5 (MT5)
+Language
+Python 3.11+
+Status
+PRE-BUILD — Architecture Complete
+Date
+March 2026
+1. Executive Summary
+APHELION is a fully autonomous, self-evolving algorithmic trading system built exclusively for XAU/USD (Gold) intraday trading. It operates on a Google Cloud Platform virtual machine equipped with an NVIDIA L4 GPU, 128GB RAM, and 32 CPU cores, running 24 hours a day, 7 days a week.
+The system consists of 20 primary modules containing over 100 sub-components, governed by a 5-tier hierarchy with weighted voting. It trades during active market sessions (London and New York), evolves its own strategies during idle hours, and trains on extreme simulated market conditions via the NEMESIS simulation engine.
+The end goal is twofold: first, to compound a $10,000 starting account at an estimated 1.8-2.8% per day using institutional-grade signals and dynamic leverage up to 100x under strict risk controls; second, to generate 50,000+ labeled trading decisions that will be used to fine-tune GPT-OSS-120B — producing APHELION-120B, a private large language model that replaces the entire 20-module stack with a single fine-tuned neural network.
+1.1 Key Performance Targets
+METRIC
+TARGET
+METHOD
+Daily return
+1.8% - 2.8%
+Dynamic leverage + signal confluence
+Win rate
+62% - 72%
+HYDRA ensemble + VENOM stat arb
+Max daily drawdown
+< 5%
+SENTINEL hardcoded kill switches
+Sharpe ratio (target)
+> 3.0
+PROMETHEUS evolution optimization
+Trades per session
+10 - 20
+Multi-strategy concurrent bots
+GPU utilization
+> 90%
+OLYMPUS resource governor
+Evolution generations/week
+100+
+28 parallel backtest workers
+NEMESIS certification
+Level 7
+All 7 Gauntlet levels passed
+1.2 System Philosophy
+APHELION is built on three principles:
+Survive first, profit second. SENTINEL's risk rules are hardcoded and cannot be overridden by any component, vote, or evolution cycle. No trade is worth blowing the account.
+Complexity earns its place. Every component must demonstrably improve system performance. Components that do not contribute measurable edge are retired by CIPHER.
+The system improves itself. PROMETHEUS continuously evolves better trading strategies using genetic algorithms and Bayesian optimization. The system running tonight is better than the system that ran yesterday.
+2. Hardware & Infrastructure Requirements
+2.1 Primary VM Specification
+COMPONENT
+SPECIFICATION
+PURPOSE
+GPU
+NVIDIA L4 — 24GB VRAM
+Neural inference, model training
+CPU
+32 cores (Intel Xeon)
+Parallel backtesting, evolution workers
+RAM
+128GB DDR4
+Full 10yr tick dataset in memory
+Storage
+2TB SSD NVMe
+Tick data, model weights, genome archive
+Network
+10Gbps
+MT5 broker connection, API feeds
+OS
+Ubuntu 22.04 LTS
+Production Linux environment
+Region
+us-east1
+Lowest latency to NY broker servers
+2.2 CPU Core Allocation
+During market sessions, CPU cores are allocated as follows:
+CORES
+ALLOCATION
+MODULE
+C00
+Data ingestion — MT5 tick stream
+DATA
+C01
+Risk monitoring — always isolated
+SENTINEL
+C02
+Terminal UI rendering
+TUI
+C03
+Event bus — inter-module messaging
+CORE
+C04-C08
+Live module inference
+HYDRA, ARES, ATLAS, PHANTOM, OLYMPUS
+C09-C12
+Money maker signals
+VENOM, REAPER, APEX, WRAITH
+C13-C20
+Background evolution (reduced)
+PROMETHEUS
+C21-C31
+Burst compute pool
+Available on demand
+During idle hours (market closed, nightly 02:00-06:00 UTC), all 32 cores redirect to PROMETHEUS deep evolution. During weekends, all cores redirect to NEMESIS simulation.
+2.3 GPU VRAM Allocation
+During market sessions:
+ALLOCATION
+SIZE
+MODULE
+HYDRA neural inference
+8.0 GB
+Live trading signals
+ARES LLM (Mixtral 8x7B / GPT-OSS-120B)
+12.0 GB
+Reasoning and strategy
+RAPIDS cuDF feature engine
+2.0 GB
+60+ feature computation
+Reserved burst
+2.0 GB
+Emergency compute
+2.4 GPU Utilization Policy
+OLYMPUS enforces the following GPU utilization rules:
+Target utilization: 90-95% at all times
+If utilization drops below 75%: auto-spawn background training jobs
+If utilization exceeds 97%: throttle non-critical background tasks
+SENTINEL inference: always has CPU fallback — never GPU-blocked
+2.5 Network Requirements
+CONNECTION
+LATENCY TARGET
+PURPOSE
+MT5 Broker
+< 10ms
+Order execution
+FRED API
+< 50ms
+Economic data
+GDELT
+< 100ms
+Geopolitical events
+Reddit/Twitter scraping
+< 500ms
+Sentiment data
+CME FedWatch
+< 100ms
+Rate probabilities
+CFTC COT data
+< 2s
+Weekly positioning data
+3. Software Stack & Dependencies
+3.1 Core Python Environment
+LIBRARY
+VERSION
+PURPOSE
+Python
+3.11+
+Primary language
+PyTorch
+2.x + CUDA
+All deep learning models
+XGBoost
+GPU build
+SHADOW, CASSANDRA classifiers
+LightGBM
+GPU build
+Feature importance, CIPHER
+Optuna
+3.x (TPE)
+PROMETHEUS Bayesian optimization
+RAPIDS cuDF
+23.x
+GPU-accelerated feature computation
+polars
+0.19+
+High-speed dataframe operations
+MetaTrader5
+5.x Python API
+Broker connection and execution
+asyncio + uvloop
+Latest
+Async event loop
+Textual
+0.47+
+Terminal UI framework
+plotext
+5.x
+ASCII charts in TUI
+FAISS
+1.7.x
+Vector database for ECHO
+neat-python
+0.92 (modified)
+NEAT neuroevolution
+stable-baselines3
+2.x
+Reinforcement learning
+llama-cpp-python
+0.2.x + CUDA
+Mixtral local inference
+SQLAlchemy
+2.x
+Database ORM
+psutil + pynvml
+Latest
+System monitoring
+gplearn
+0.4.x
+Symbolic regression for signal archaeology
+shap
+0.43+
+Feature attribution (CIPHER)
+3.2 External APIs
+API
+AUTHENTICATION
+DATA PROVIDED
+UPDATE FREQUENCY
+MT5 Broker
+Account credentials
+Tick data, order execution
+Real-time
+FRED API
+Free API key
+Real yields, economic data
+Daily/Release
+GDELT Project
+None (public)
+Geopolitical events
+15 minutes
+CFTC COT
+None (public)
+Futures positioning
+Weekly (Friday)
+CME FedWatch
+None (public)
+Rate probabilities
+Real-time
+Reddit API
+OAuth2 app
+Sentiment data
+Every 60s
+Twitter/X API
+Bearer token
+Financial tweets
+Every 60s
+Yahoo Finance
+None (public)
+GLD ETF flows, equity data
+Every 5min
+Kitco RSS
+None (public)
+Gold news
+Every 15min
+4. The 20 Modules — Complete Specification
+4.1 HYDRA — Neural Intelligence Core
+Absorbs: HYDRA-X, KRONOS, ECHO, ECHO-X
+Purpose
+The primary prediction engine. HYDRA is a neural ensemble of four specialized models unified by a dynamic attention gate. Each sub-model specializes in a different aspect of market behavior.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+HYDRA-TFT
+Temporal Fusion Transformer. Multi-horizon prediction with variable selection networks. Outputs P(LONG)/P(SHORT)/P(FLAT) with uncertainty bounds across 5m, 15m, 1h horizons.
+HYDRA-LSTM
+Bidirectional LSTM with self-attention. Captures sequential momentum and regime persistence. Maintains separate hidden states per timeframe.
+HYDRA-CNN
+Convolutional ResNet applied to 64-bar OHLCV images (4-channel input). Detects geometric candle patterns and structural formations. Outputs 128-dim regime embedding.
+HYDRA-MOE
+Mixture of Experts with 4 specialist models: TREND, RANGE, VOL_EXPANSION, NEWS_REACTION. Gating transformer routes each input to the appropriate expert.
+HYDRA-GATE
+Dynamic attention gate. Weights all four model outputs based on real-time regime classification. Replaces static ensemble averaging.
+KRONOS
+TimesFM foundation model fine-tuned on 10 years of XAU/USD tick data. Provides probabilistic multi-horizon forecasts (P10/P50/P90) as a fifth ensemble input.
+ECHO
+FAISS vector database of 50,000 historical 500-bar windows from 2000-2019. KNN retrieval finds the K most similar historical market situations and reports what happened next.
+ECHO-X
+Separate FAISS database covering 2020-present. Stores post-COVID, post-rate-hike, and crypto-correlation-era analogs which behave distinctly from pre-2020 patterns.
+FIELD
+DETAIL
+Inputs
+60+ engineered features, raw OHLCV, tick microstructure data
+Outputs
+HYDRA_SIGNAL (LONG/SHORT/FLAT), HYDRA_CONFIDENCE (0-1), HYDRA_UNCERTAINTY, regime classification
+Parameters
+~114M (TFT 48M + LSTM 12M + CNN 18M + MoE 32M + Gate 4M) + KRONOS 200M = ~314M neural parameters
+Edge Contribution
++0.40%/day base edge improvement over no-ML baseline
+4.2 FORGE — Online Learning & Signal Intelligence
+Absorbs: FORGE, CIPHER, MERIDIAN, PRISM
+Purpose
+Keeps the system adapted to current market conditions in real time. PROMETHEUS handles long-term evolution (weeks); FORGE handles short-term adaptation (hours).
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+FORGE-MAML
+Model-Agnostic Meta-Learning. Performs 5 gradient steps on the most recent 100 bars during live trading. Adapts HYDRA weights to current regime without full retraining.
+FORGE-REGIME
+Rapid regime shift detector. Uses change-point analysis on rolling VPIN and entropy to detect regime transitions within 30-90 minutes.
+CIPHER-DECAY
+Rolling SHAP importance tracker. Computes 30-day vs 90-day SHAP ratio for every feature. Detects alpha decay before it impacts performance.
+CIPHER-HALFLIFE
+Exponential decay curve fitting on each signal's historical performance. Estimates the half-life of each alpha source and schedules proactive replacement.
+MERIDIAN-GRANGER
+Rolling Granger causality F-statistics between all timeframe pairs. Determines which timeframe is currently driving price action.
+MERIDIAN-WEIGHTS
+Dynamic timeframe weight vector [w_1m, w_5m, w_15m, w_1h]. Replaces static MTF alignment score with causality-derived weights updated every 50 bars.
+PRISM
+Multi-timeframe signal decomposer. Breaks every signal into its per-timeframe contribution. Identifies which timeframe is generating the edge on each trade.
+FIELD
+DETAIL
+Inputs
+HYDRA weights, recent 100 bars, SHAP values, rolling performance by signal
+Outputs
+Adapted model weights, CIPHER_DECAY_ALERTS, MERIDIAN_WEIGHTS, PRISM_DECOMPOSITION
+Parameters
+~8M (MAML meta-learner)
+Edge Contribution
++0.11%/day from MAML adaptation; prevents -0.20%/day from dead signal decay
+4.3 PROMETHEUS — Evolution & Genetic Optimization Engine
+Absorbs: PROMETHEUS, ZEUS, MATRIX
+Purpose
+The self-improvement engine. PROMETHEUS continuously evolves better trading strategies using three complementary evolutionary methods running in parallel.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+PROMETHEUS-NEAT
+Neuroevolution of Augmenting Topologies. Evolves both the weights AND topology of trading neural networks. Population size 48. Bottom 25% killed each generation.
+PROMETHEUS-PBT
+Population-Based Training (DeepMind method). N models train simultaneously. Bottom 20% copy top 20% weights then mutate hyperparameters.
+PROMETHEUS-BAYES
+Bayesian Optuna TPE hyperparameter search. Prunes underperforming trials early using Hyperband. Covers: learning rates, feature sets, risk parameters, architecture choices.
+PROMETHEUS-FITNESS
+Multi-objective fitness function: fitness = Sharpe*0.30 + DSR*0.20 + ProfitFactor*0.20 + (1-MDD)*0.15 + RegimeConsistency*0.10 + WinRateConsistency*0.05
+PROMETHEUS-DEPLOY
+Genome promotion pipeline. Walk-forward validation → Monte Carlo 500 paths → ZEUS stress test → paper trading → live deployment. Full pipeline before any genome touches real money.
+ZEUS-STRESS
+Pre-deployment stress tester. Every genome must survive: flash crash simulation, 10x spread blowout, 500ms latency spikes, data gap injection, and LEVIATHAN adversarial attacks.
+ZEUS-GAN
+GAN-generated synthetic regime generator. Creates never-seen market conditions to test for overfitting. Genomes that fail GAN regimes are rejected.
+MATRIX
+Parallel paper trading simulation. Runs every rejected signal in a virtual account. Tracks what WOULD have happened. Feeds missed opportunity data back to PROMETHEUS.
+FIELD
+DETAIL
+Inputs
+Historical tick data (10 years), feature engine output, SENTINEL risk parameters
+Outputs
+Evolved genomes (YAML), deployment decisions, fitness leaderboard
+Parameters
+Variable — NEAT evolves topology, so parameter count changes per generation
+Edge Contribution
++0.22%/day from continuously improving genome quality
+4.4 SENTINEL — Supreme Risk Authority
+Absorbs: SENTINEL, TITAN, GHOST
+Purpose
+The only component that cannot be modified by evolution, voting, or any automated process. SENTINEL's rules are hardcoded in Python and only changeable by the sovereign user.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+SENTINEL-CORE
+Hardcoded kill switch logic. Three-tier system: L1 pauses individual bot, L2 pauses all bots, L3 disconnects from broker entirely (requires manual restart).
+SENTINEL-SIZING
+Per-trade position sizing. Applies Kelly criterion with HYDRA confidence as the edge estimate. Maximum position: 2% of account per trade. Hard ceiling regardless of Kelly output.
+SENTINEL-NEWS
+News lockout engine. Blocks all trading 5 minutes before and 2 minutes after high-impact economic releases. Calendar maintained from ForexFactory and FRED.
+TITAN-KELLY
+Full Kelly criterion with fractional adjustment. Multi-asset Kelly optimization across all simultaneously running bots. Detects correlated positions and reduces combined size.
+TITAN-ALLOC
+Dynamic capital allocation per bot. Bots with higher rolling Sharpe receive more capital. Bots in drawdown receive less. Rebalances every 6 hours.
+TITAN-VOLTAR
+Volatility targeting engine. Adjusts position sizes so total portfolio volatility remains constant regardless of market conditions.
+GHOST-STEALTH
+Execution randomizer. Adds random 3-8 second delays to order submission. Varies lot sizes by +/- 5% randomly. Prevents pattern detection by broker or competing algos.
+FIELD
+DETAIL
+Inputs
+Account equity, open positions, market volatility, HYDRA confidence, news calendar
+Outputs
+Approved/rejected trade decisions, position sizes, kill switch status
+Parameters
+None — rule-based, not learned
+Edge Contribution
+Prevents catastrophic losses. Estimated value: prevents -5% account days that wipe weekly gains.
+4.5 ARES — LLM Brain — Reasoning, Strategy, Narration
+Absorbs: ARES, CASSANDRA, ORACLE
+Purpose
+The language model layer. ARES provides qualitative reasoning that quantitative models cannot — interpreting news context, generating strategy hypotheses, and explaining every trade in plain English.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+ARES-SENTIMENT
+Processes raw news text into structured signals: direction score (-1 to +1), confidence (0-1), magnitude (LOW/MED/HIGH), time horizon (INTRADAY/SWING/MACRO).
+ARES-REASONING
+Trade confirmation layer. Given HYDRA's signal + full market context, ARES outputs CONFIRM / REDUCE_50% / VETO. Maximum 3 vetoes per session. Veto accuracy tracked.
+ARES-STRATEGIST
+Weekly autonomous hypothesis generation. Reads performance reports + recent news, generates 5-10 new strategy hypotheses, passes them to PROMETHEUS for backtesting.
+ARES-NARRATOR
+Generates plain-English explanation for every trade displayed on TUI F1. Written in 2-3 sentences maximum. Updated in real time as trade progresses.
+ARES-FUND
+Daily fund report generator. Produces institutional-quality P&L attribution, regime exposure, benchmark comparison, and drawdown forensics reports.
+CASSANDRA
+24-hour gold direction predictor. XGBoost classifier trained on 8 years of daily data. 10 macro features. Outputs BULLISH/BEARISH/NEUTRAL with probability and expected range.
+ORACLE
+Central bank macro decoder. Semantic embeddings of all FOMC statements since 2015. Classifies current macro regime: HAWKISH_PIVOT / DOVISH_HOLD / NEUTRAL_WAIT / CRISIS_MODE.
+FIELD
+DETAIL
+Inputs
+News text, HYDRA signals, economic data, FRED real yields, performance history
+Outputs
+ARES_SIGNAL, CASSANDRA_BIAS, ORACLE_REGIME, trade narrations, weekly hypotheses
+Parameters
+~46.7B (Mixtral 8x7B) current; upgradeable to GPT-OSS-120B (117B) for APHELION
+Edge Contribution
++0.23%/day combined (ARES reasoning +0.13%, CASSANDRA bias +0.10%)
+4.6 ATLAS — Macro & Web Intelligence
+Absorbs: ATLAS, ARGUS, HERALD
+Purpose
+External intelligence layer. Monitors geopolitical events, economic data releases, and web sentiment in real time to give APHELION context that no chart can provide.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+ATLAS-GDELT
+GDELT Project integration. Real-time geopolitical event stream updated every 15 minutes. Computes ATLAS_GEOPOLITICAL_STRESS score. Identifies gold-positive risk events.
+ATLAS-COT
+CFTC Commitment of Traders processor. Downloads and parses Friday 3:30 PM release. Computes large speculator net position z-score. Strong contrarian signal at extremes.
+ATLAS-MACRO
+Structural gold bias tracker. BIS central bank gold reserve data. CME FedWatch rate probabilities. Long-term macro tailwind/headwind classification.
+ARGUS-SCRAPER
+Multi-source web scraper: Reddit (r/gold, r/investing, r/wallstreetbets), Twitter/X (verified financial accounts only), TradingView public ideas, Kitco news RSS.
+ARGUS-FINBERT
+Local FinBERT sentiment classifier. Scores all scraped content -1 to +1. Maintains rolling 4-hour sentiment momentum. Detects crowd capitulation (contrarian signal).
+HERALD-MONITOR
+Government data release watcher. Monitors BLS.gov, Fed.gov, Treasury.gov, Census.gov directly. Processes NFP, CPI, PPI the instant they publish.
+HERALD-SIGNAL
+Economic data signal generator. Computes actual vs consensus, revision delta, internal composition. Produces BEAT/MISS/INLINE classification with gold directional implication within 400ms.
+FIELD
+DETAIL
+Inputs
+Public APIs, web scraping, government data release pages
+Outputs
+ATLAS_BIAS, ARGUS_SENTIMENT, HERALD_SIGNAL, geopolitical stress score
+Parameters
+~110M (FinBERT) + rule-based components
+Edge Contribution
++0.21%/day combined from macro alignment and early data processing
+4.7 PHANTOM — Institutional Flow & Manipulation Detection
+Absorbs: PHANTOM, SPECTER, NEXUS
+Purpose
+Detects what the big players are doing. PHANTOM finds institutional order flow being executed in the market. SPECTER detects when that flow is fake. NEXUS finds which asset is leading.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+PHANTOM-METAORDER
+Institutional metaorder reconstruction. Detects large orders being split into smaller pieces using TWAP/VWAP execution. Outputs PHANTOM_DIRECTION, PHANTOM_PROGRESS (0-100%), PHANTOM_URGENCY.
+PHANTOM-TWAP
+TWAP fingerprinting algorithm. Identifies algorithmic execution patterns characteristic of institutional TWAP strategies. Detects order acceleration (URGENCY rising) as signal.
+PHANTOM-HAWKES
+Hawkes process clustering for buy/sell order flow. Self-exciting point process models order arrival intensity. Sustained asymmetric intensity = institutional accumulation/distribution.
+SPECTER-SPOOF
+Spoofing detector. Identifies orders placed and cancelled within <200ms (humanly impossible). Tracks bid-ask order book changes at 50ms resolution. SPECTER_SCORE 0-100.
+SPECTER-MANIP
+Market manipulation classifier. Detects layering (stacked fake orders), quote stuffing (order spam to slow competing systems), and dark pool prints (off-exchange trades).
+NEXUS-CORR
+Rolling cross-asset correlation matrix. Monitors 10 assets: DXY, US10Y, US2Y, TLT, GLD, SLV, XLE, VIX, SP500, EURUSD. Updates every 5 minutes.
+NEXUS-LEADLAG
+Lead-lag detector. Identifies which asset is currently moving first and which gold is following. Outputs NEXUS_LEAD_ASSET and average lead time in minutes.
+FIELD
+DETAIL
+Inputs
+MT5 tick data, order book data, external asset prices
+Outputs
+PHANTOM_SIGNAL, SPECTER_SCORE, NEXUS_LEAD, manipulation alerts
+Parameters
+~15M (neural components) + statistical models
+Edge Contribution
++0.27%/day combined (institutional flow riding + manipulation avoidance)
+4.8 SHADOW — Personal Trading DNA Engine
+Absorbs: SHADOW only
+Purpose
+The most unique component in the system. SHADOW observes every manual trade made by the sovereign user, learns the patterns behind successful trades, and replicates that edge autonomously.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+SHADOW-CORE
+Manual trade recorder. Every time a trade is opened manually, captures the complete market state: all 60+ features, VPIN, entropy, regime, session, ARES context, CASSANDRA prediction.
+SHADOW-LEARN
+XGBoost classifier trained exclusively on the user's manual trade history. Learns which specific combinations of market conditions the user historically finds edge in.
+SHADOW-SIGNAL
+Pattern matching engine. Fires SHADOW_SIGNAL when current market conditions match the user's historically profitable setups. Confidence scales with similarity score.
+SHADOW-DNA
+After 200+ trades, extracts the user's implicit trading rules as an XGBoost decision tree. Makes the unconscious edge conscious and transferable to PROMETHEUS genome seeding.
+FIELD
+DETAIL
+Inputs
+Manual trade events from MT5, complete market state at time of each trade
+Outputs
+SHADOW_SIGNAL, SHADOW_CONFIDENCE, pattern match description for TUI display
+Parameters
+~500K (XGBoost ensemble)
+Edge Contribution
++0.28%/day once trained on 50+ trades. Unique to each user — cannot be replicated.
+4.9 NEMESIS — Extreme Market War Simulator
+Absorbs: PANDORA, LEVIATHAN, CHRONOS, VERDICT
+Purpose
+The training environment. Before APHELION risks real money in any condition, it must survive that condition in NEMESIS first. NEMESIS makes real gold feel like easy mode.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+PANDORA
+Extreme synthetic market generator. Same physics as real gold. Random seed leverage (3x-50x) applied to price moves, spread, and liquidity simultaneously.
+PANDORA-SCENARIOS
+Six extreme scenario types: Flash Crash (price -80% in seconds), Hyperliquidity (zero spread), Manipulation (fake pumps/dumps), Black Swan Cascade (10 events in sequence), Zero Liquidity (spread 100x normal), Time Compression (1 year in 1 hour).
+LEVIATHAN
+Adversarial villain bot. Has market-making access, can front-run APHELION orders by 50ms, has infinite capital. Uses 4 attack strategies: MIRROR, HUNTER, FOGGER, AVALANCHE.
+LEVIATHAN-EVOLVE
+LEVIATHAN uses its own NEAT evolution loop. Adapts to APHELION's strategies over time. Gets harder as APHELION gets better. Permanent arms race.
+CHRONOS
+Time compression engine. Can replay markets at 1x, 10x, 50x, 100x, or 500x real speed. At 500x, APHELION experiences 1 full year of extreme market history in 17.5 hours.
+CHRONOS-GAUNTLET
+Historical Gauntlet — all major market crises since 1971: Nixon Shock, Black Monday (1987), LTCM (1998), Dot-Com (2000), 9/11, 2008 GFC (full Lehman sequence), 2020 COVID crash, Ukraine invasion, 2022 rate hike cycle. 7 levels of increasing difficulty.
+VERDICT
+Session scoring engine. Six metrics: Survival (0-100), Adaptation (0-100), LEVIATHAN detection (0-100), Regime (0-100), Recovery (0-100), Efficiency (0-100). NEMESIS RATING > 80 required for live deployment.
+FIELD
+DETAIL
+Inputs
+Historical tick data, random seeds, APHELION trading decisions
+Outputs
+NEMESIS_RATING, lesson extraction records, training data for APHELION-120B fine-tuning
+Parameters
+~12M (LEVIATHAN GAN + neural adversary)
+Edge Contribution
+Qualification gate — genomes below NEMESIS RATING 80 never reach live capital.
+4.10 OLYMPUS — System Governor & Auto-Tuner
+Absorbs: OLYMPUS, COUNCIL
+Purpose
+The brain above all brains. OLYMPUS monitors every component's health, manages system resources, runs the governance voting system, and continuously tunes the entire system for peak performance.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+OLYMPUS-GOVERNOR
+Master system tuner. Monitors all 20 modules every 6 hours. Assigns health scores. Reallocates CPU/GPU from underperforming modules to overperforming ones.
+OLYMPUS-RESOURCE
+Dynamic GPU/CPU allocation. Shifts compute between live inference and background training based on market activity. Below 75% GPU: spawns training jobs. High volatility: shift GPU to inference.
+OLYMPUS-STAGNATION
+PROMETHEUS stagnation detector. If fitness does not improve for 5+ generations, injects diversity reset: kills bottom 50% of genome population, replaces with random genomes to escape local optima.
+OLYMPUS-COUNCIL
+5-tier weighted voting system. Manages all trade decisions requiring multi-component consensus. Tier 1 (Sovereign): infinite votes. Tier 2 (Council: OLYMPUS, SENTINEL, ARES): 100 votes each. Tier 3 (Ministers): 40 votes each. Tier 4 (Commanders): 10 votes each. Tier 5 (Operators): 1 vote each.
+OLYMPUS-AUDIT
+6-hour performance audit. Every component gets a health score. Audit results logged to SQLite. Provides ARES with weekly performance context for strategy generation.
+FIELD
+DETAIL
+Inputs
+All component health metrics, system resources, vote requests
+Outputs
+Resource allocation decisions, vote results, health scores, stagnation alerts
+Parameters
+None — rule-based governor
+Edge Contribution
++0.14%/day from maintaining peak system configuration
+4.11 VENOM — Statistical Arbitrage Engine
+Absorbs: VENOM only — standalone
+Purpose
+Exploits the mathematical cointegration relationships between gold and correlated assets. When the spread between gold's actual price and its cointegrated predicted value exceeds 2 standard deviations, VENOM fires a mean-reversion signal with 72-78% historical win rate.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+VENOM-CORE
+Rolling Engle-Granger cointegration tests every 50 bars across XAU vs DXY, XAU vs real yields, and XAU vs silver ratio. Detects statistically significant spread deviations.
+VENOM-ADAPT
+Recalibrates cointegration model parameters as relationships evolve. Detects permanent structural breaks vs temporary deviations. Retires broken relationships automatically.
+FIELD
+DETAIL
+Inputs
+XAU/USD price, DXY, real yields (FRED), silver price
+Outputs
+VENOM_SIGNAL, VENOM_SPREAD_ZSCORE, VENOM_CONFIDENCE
+Parameters
+Statistical — no neural parameters
+Edge Contribution
++0.31%/day. Regime-independent — works in trending AND ranging markets.
+4.12 REAPER — Liquidity Vacuum Exploit Engine
+Absorbs: REAPER only — standalone
+Purpose
+Positions APHELION BEFORE predictable liquidity events. At specific times each day, market makers pull quotes, creating brief liquidity vacuums where price moves violently to find the next available liquidity.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+REAPER-CORE
+Monitors bid-ask spread width and quote depth in real time. When spread starts widening 30-45 seconds before a known liquidity event, REAPER pre-positions in the historically dominant direction.
+REAPER-ADAPT
+Learns the historically dominant direction for each liquidity event type (London fix, NY open, pre-news, month-end). Updates directional bias based on recent 90-day performance per event type.
+FIELD
+DETAIL
+Inputs
+MT5 tick data, bid-ask spread, order book depth, economic calendar
+Outputs
+REAPER_SIGNAL, REAPER_EVENT_TYPE, REAPER_DIRECTION
+Parameters
+Statistical + XGBoost directional model
+Edge Contribution
++0.24%/day from 8-12 additional high-probability trades per day.
+4.13 APEX — Volatility Breakout Capitalizer
+Absorbs: APEX only — standalone
+Purpose
+Hunts volatility compression followed by explosive breakouts. Detects when gold is coiling energy (narrow Bollinger Bands + declining ATR + low VPIN) and places pending orders on both sides to catch the breakout regardless of direction.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+APEX-CORE
+Five-condition compression detector: BB width below 15th percentile, ATR contracting 8+ bars, volume declining with flat price, VPIN below 0.4, tick entropy rising. All five required.
+APEX-ADAPT
+Optimizes compression thresholds per market regime and session. London open compressions have different characteristics than Asian session compressions. Adapts per CHRONOS time context.
+FIELD
+DETAIL
+Inputs
+OHLCV, Bollinger Bands, ATR, VPIN, tick entropy, volume
+Outputs
+APEX_SIGNAL, APEX_BREAKOUT_ZONE, pending order levels
+Parameters
+Statistical — threshold-based with XGBoost calibration
+Edge Contribution
++0.19%/day. Minimum 1:3 R:R on every triggered trade. 3-5 setups per week.
+4.14 WRAITH — News Spike Reversion Assassin
+Absorbs: WRAITH only — standalone
+Purpose
+Fades news-driven price spikes that exceed the expected ATR response. News spikes on gold almost always overshoot — algorithmic front-runners push price hard then immediately take profit, trapping retail chasers. WRAITH enters the reversion.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+WRAITH-CORE
+Waits for ATLAS/HERALD to detect a high-impact event. When price moves more than 1.5x expected ATR within 60 seconds AND VPIN does NOT confirm the direction, WRAITH waits 45-90 seconds then enters counter-trend targeting 38-50% spike retracement.
+WRAITH-ADAPT
+Optimizes entry timing (45-90 second window) and retracement target per news event category. CPI miss vs NFP beat have different reversion profiles. Learns each type separately.
+FIELD
+DETAIL
+Inputs
+ATLAS/HERALD event signals, price action, VPIN, ATR
+Outputs
+WRAITH_SIGNAL, WRAITH_ENTRY_TIME, WRAITH_TARGET
+Parameters
+Statistical + XGBoost timing model
+Edge Contribution
++0.14%/day. 68-74% win rate on confirmed news spikes with VPIN non-confirmation.
+4.15 APHELION-MODEL — APHELION-120B Training Pipeline
+Absorbs: APHELION fine-tuning pipeline
+Purpose
+The end goal. Collects every system decision as structured training data, then fine-tunes GPT-OSS-120B into APHELION-120B — a single model that replaces the entire 20-module stack.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+APH-COLLECTOR
+Logs every trade decision with full context: market state (60+ features), component votes, final decision, outcome, ARES reasoning. Target: 50,000 labeled records over 6 months.
+APH-SCHEMA
+Training data schema enforcer. Every record follows a strict JSON schema compatible with GPT-OSS-120B Harmony format for supervised fine-tuning.
+APH-FINETUNE
+GPT-OSS-120B fine-tuning script. Runs on rented 2xH100 ($288 one-time). SFT phase on 50k decisions. RLHF phase on trade outcomes. DPO for preference alignment.
+APH-EVAL
+Evaluation harness. Paper-trades the fine-tuned model against held-out recent data. Compares accuracy to full Phoenix v7 stack. Target: 85%+ accuracy parity.
+APH-EXPORT
+Quantizes APHELION-120B to GGUF 4-bit (~30GB). Deploys locally via Ollama on the L4 GPU with CPU offload. Single command: `ollama run aphelion-120b`.
+FIELD
+DETAIL
+Inputs
+All system decisions and outcomes, GPT-OSS-120B base weights
+Outputs
+APHELION-120B — fine-tuned 120B parameter trading LLM
+Parameters
+117B total (5.1B active per token — MoE architecture)
+Edge Contribution
+Replaces 20 modules with 1 model. 40ms inference vs 200ms multi-component pipeline.
+4.16 FUND — Institutional Performance Reporting
+Absorbs: All fund reporting and performance calculation components
+Purpose
+Makes a $10,000 account look like a hedge fund on paper — legitimately. Reports every metric institutional funds report, at the same level of detail, regardless of account size.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+FUND-CAPTURE
+Alpha capture rate calculator. For every completed trade: actual P&L / theoretical maximum P&L (perfect entry + perfect exit). Target: 70%+ capture rate.
+FUND-ATTRIBUTION
+Per-component P&L attribution. Tags every dollar of profit with the component that generated the signal. Daily breakdown: VENOM $X, REAPER $Y, PHANTOM $Z, etc.
+FUND-BENCHMARK
+Real-time benchmark comparison: GLD ETF, S&P 500, 60/40 Portfolio, Bitcoin, Gold Buy-and-Hold. Updated after every trade. Displayed on TUI F4.
+FUND-REGIME
+Regime exposure ledger. Tracks minutes spent in each regime (TRENDING/RANGING/VOLATILE/NEWS) and P&L per regime per day.
+FUND-FORENSICS
+Drawdown post-mortem generator. Every drawdown gets automated root cause analysis: which component failed, what signal was wrong, what LEVIATHAN equivalent occurred.
+FUND-REPORT
+Daily fund report generator (ARES-powered). Institutional-quality document with full P&L attribution, regime exposure, benchmark comparison, drawdown forensics, and Sharpe velocity.
+FIELD
+DETAIL
+Inputs
+All trade outcomes, component signals, market data
+Outputs
+Daily fund report PDF, live dashboard metrics, benchmark comparisons
+Parameters
+None — calculation engine
+Edge Contribution
+No direct trading edge — provides institutional reporting quality and trade analysis.
+4.17 DATA — Data Layer & Feature Engineering
+Absorbs: Data layer, feature engine — 60+ features
+Purpose
+The foundation everything runs on. Clean, normalized, validated market data and a comprehensive feature set that every other module consumes.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+DATA-MT5
+MetaTrader5 Python API connection. Real-time tick stream. Bar aggregation: 1m, 5m, 15m, 1h. Automatic reconnection on disconnect. Data quality validation on every bar.
+DATA-MICROSTRUCTURE
+Microstructure features: VPIN (volume-synchronized probability of informed trading), OFI (order flow imbalance), tick entropy (Shannon entropy of tick direction), Hawkes buy/sell intensity ratio, bid-ask spread dynamics.
+DATA-STRUCTURE
+Market structure features: order blocks, fair value gaps, swing highs/lows, liquidity pools, equal highs/lows, breaker blocks, volume imbalances.
+DATA-VOLUME
+Volume features: volume delta, cumulative delta (CVD), point of control (POC), value area high/low (VAH/VAL), volume profile per session.
+DATA-SESSIONS
+Session features: London open/close flags, NY open/close flags, Tokyo session, overlap periods, time-to-close, day-of-week, week-of-month, proximity to news events.
+DATA-MTF
+Multi-timeframe feature aggregation. All features computed on 1m, 5m, 15m, 1h. Alignment scores between timeframes. MERIDIAN weights applied dynamically.
+DATA-VWAP
+VWAP variants: session VWAP, anchored VWAP (from last swing), rolling VWAP with +1/-1 and +2/-2 standard deviation bands.
+FIELD
+DETAIL
+Inputs
+Raw MT5 tick data
+Outputs
+60+ normalized features, updated every tick for 1m bars, aggregated for higher timeframes
+Parameters
+None — computation engine
+Edge Contribution
+Foundation layer — enables all other components. Feature quality directly determines system performance.
+4.18 BACKTEST — Walk-Forward Testing & Monte Carlo Engine
+Absorbs: Backtester, Monte Carlo, walk-forward validation
+Purpose
+Validates every genome before it touches real capital. Tick-level accuracy, Monte Carlo uncertainty quantification, and walk-forward validation to prevent overfitting.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+BACKTEST-ENGINE
+Tick-level backtesting engine. Replays historical tick data with realistic spread, slippage, and commission models. No look-ahead bias. 10-year dataset capability.
+BACKTEST-WALKFORWARD
+Rolling walk-forward validation. Training window: 6 months. Validation window: 2 months. Step: 1 month. Minimum 12 out-of-sample windows required for deployment approval.
+BACKTEST-MONTECARLO
+500-path Monte Carlo simulation per genome. Random trade ordering, equity curve path sampling, drawdown distribution estimation. P5/P50/P95 outputs for SENTINEL risk calibration.
+BACKTEST-METRICS
+Full institutional metric suite: Sharpe ratio, Deflated Sharpe Ratio (DSR), Calmar ratio, Sortino ratio, Omega ratio, Maximum Drawdown, Profit Factor, Win Rate, Average R:R, Expectancy, total trade count.
+FIELD
+DETAIL
+Inputs
+Historical tick data, genome parameters, SENTINEL risk rules
+Outputs
+Full backtest report, walk-forward equity curves, Monte Carlo paths, deployment approval/rejection
+Parameters
+None — simulation engine
+Edge Contribution
+Qualification gate — prevents overfitted or fragile genomes from reaching live capital.
+4.19 GOVERNANCE — 5-Tier Hierarchy & Voting System
+Absorbs: Voting engine, hierarchy management
+Purpose
+The constitutional framework governing all system decisions. Separates concerns, prevents single-component failures from causing system-wide damage, and ensures SENTINEL can never be overruled on risk.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+GOV-VOTE
+Weighted voting engine. Processes vote requests, tallies weighted votes across participating tiers, applies decision thresholds, logs every vote to votes.db.
+GOV-HIERARCHY
+5-tier authority structure: Tier 1 Sovereign (user, infinite votes), Tier 2 Council (OLYMPUS/SENTINEL/ARES, 100 each), Tier 3 Ministers (7 modules, 40 each), Tier 4 Commanders (12, 10 each), Tier 5 Operators (100 modules, 1 each).
+GOV-EMERGENCY
+Fast-path emergency decisions. When SENTINEL triggers L2 or L3, bypasses full voting system. SENTINEL can pause all trading unilaterally. No vote required for risk events.
+GOV-AUDIT
+Immutable vote log. Every vote record: timestamp, decision type, all votes cast, result, outcome. Stored in append-only SQLite. Used for system debugging and APHELION training data.
+FIELD
+DETAIL
+Inputs
+Vote requests from all modules, SENTINEL risk status
+Outputs
+Vote results, governance audit log, emergency signals
+Parameters
+None — rule-based
+Edge Contribution
+System integrity layer — prevents conflicting decisions and ensures risk supremacy.
+4.20 TUI — 12-Screen Terminal User Interface
+Absorbs: Full terminal UI — all 12 screens
+Purpose
+Complete system visibility. Every number, every decision, every component state visible in real time. Dark theme with neon green accents on pure black background.
+Sub-Components
+SUB-COMPONENT
+DESCRIPTION
+TUI-F1-LIVE
+Live Trading: 5m ASCII chart with VWAP/OB/FVG overlays, volume delta bars, open positions table, active bots, signal stack (VPIN/entropy/OFI/Hawkes/MTF/COT/CASSANDRA/SHADOW), ARES reasoning panel, trade ticker.
+TUI-F2-EVOLUTION
+Evolution Lab: PROMETHEUS genome leaderboard (fitness/Sharpe/DSR/MDD/WR/trades/age/status), genome inspector, generation progress, PBT activity, SHAP feature importances with decay indicators.
+TUI-F3-NEMESIS
+Nemesis Simulator: PANDORA active scenario, CHRONOS speed, LEVIATHAN mode and attack log, VERDICT scores, Gauntlet level certification status (7 levels).
+TUI-F4-FUND
+Fund Report: alpha capture rate, Sharpe velocity (7/30/90 day), P&L attribution by component, benchmark destroyer (5 benchmarks), regime exposure ledger, drawdown forensics.
+TUI-F5-RISK
+Risk & Kill Switch: 3-tier kill switch status and manual controls, daily risk summary, per-bot pause buttons, news lockout calendar with countdown timers.
+TUI-F6-HIERARCHY
+Hierarchy & Voting: live vote feed, last 20 votes with full breakdown, tier voting power display, SENTINEL veto status, emergency protocol status.
+TUI-F7-BRAIN
+ARES Brain: LLM model status, current reasoning, veto budget, CASSANDRA 24H prediction (direction/range/driver), SHADOW status (trades learned/accuracy/last match/detected pattern).
+TUI-F8-BACKTEST
+Backtester: equity curve with 500 MC paths (P5/P50/P95), full metrics table, monthly P&L heatmap, best/worst hours, genome selector dropdown.
+TUI-F9-MACRO
+Macro Intelligence: ORACLE macro regime, ATLAS geopolitical bias, NEXUS cross-asset matrix with lead-lag, ARGUS web sentiment by source, HERALD next release countdown.
+TUI-F10-HEALTH
+Component Health: all 20 modules with health %, CPU/GPU load, OLYMPUS score, status. OLYMPUS action log with last 20 resource allocation decisions.
+TUI-F11-SYSTEM
+System Resources: per-core CPU bars (32 cores), GPU VRAM breakdown by module, RAM allocation, network latency to broker/APIs, execution latency distribution.
+TUI-F12-LOGS
+Audit Logs: filterable real-time log, color-coded by source, search by component/time/type, auto-scroll, export to file.
+FIELD
+DETAIL
+Inputs
+All module outputs, system metrics
+Outputs
+Visual display only — no trading logic
+Parameters
+None
+Edge Contribution
+Operational — enables real-time monitoring and manual intervention.
+5. Feature Engineering — Complete Specification
+The DATA module computes 60+ features on every tick update. These features are the raw material consumed by every intelligence module.
+5.1 Microstructure Features
+FEATURE
+FORMULA / METHOD
+SIGNAL MEANING
+VPIN
+Volume bucket imbalance / total volume
+High = informed trading in progress
+OFI
+Bid delta + Ask delta (50ms filter)
+Order flow directionality
+Tick Entropy
+Shannon entropy of tick direction sequence
+Low = directional, High = noise
+Hawkes Buy Intensity
+Self-exciting Poisson process on buy ticks
+Accelerating buys = accumulation
+Hawkes Sell Intensity
+Self-exciting Poisson process on sell ticks
+Accelerating sells = distribution
+Micro-price Divergence
+Mid-price vs weighted mid-price delta
+Imbalance in passive orders
+Bid-Ask Spread
+Ask - Bid in pips
+Liquidity proxy
+Spread Velocity
+Rate of change of spread
+Liquidity event warning
+Quote Depth
+Total visible orders within 5 pips
+Market depth proxy
+5.2 Market Structure Features
+FEATURE
+METHOD
+PURPOSE
+Order Block (OB)
+Last bearish candle before bullish impulse (and vice versa)
+Institutional price memory
+Fair Value Gap (FVG)
+Gap between candle 1 high and candle 3 low (3-bar pattern)
+Imbalance zones price returns to
+Swing High/Low
+Fractal detection with N-bar confirmation
+Structure breaks and retests
+Liquidity Pool
+Equal highs/lows within 5 pip tolerance
+Stop hunt targets
+Breaker Block
+Order block invalidated by price — now flipped
+High-probability reversal zone
+Volume Imbalance
+Candle with >2x average volume on directional move
+Institutional participation signal
+Change of Character
+First candle to close above/below prior swing
+Early trend change detection
+5.3 Volume Profile Features
+FEATURE
+DESCRIPTION
+Volume Delta
+Aggressive buy volume minus aggressive sell volume per bar
+Cumulative Delta (CVD)
+Running sum of volume delta over session
+Point of Control (POC)
+Price level with highest volume traded in session
+Value Area High (VAH)
+Upper boundary of 70% volume value area
+Value Area Low (VAL)
+Lower boundary of 70% volume value area
+Delta Divergence
+Price making new high while CVD making lower high (distribution signal)
+Absorption
+Large volume with minimal price movement (institutional absorption)
+5.4 Session & Calendar Features
+FEATURE
+VALUES
+Current session
+ASIAN / LONDON / NY / OVERLAP_LDN_NY / DEAD_ZONE
+Time to London open
+Minutes (negative when past)
+Time to NY open
+Minutes
+Time to session close
+Minutes
+Day of week
+MON / TUE / WED / THU / FRI
+Week of month
+1 / 2 / 3 / 4 / 5
+Minutes to next high-impact news
+Minutes (SENTINEL lockout at < 5)
+Last high-impact news recency
+Minutes since last event
+Month-end flag
+Boolean — last 2 trading days of month
+Quarter-end flag
+Boolean — last week of quarter
+6. Leverage, Execution & Position Sizing
+6.1 Dynamic Leverage Framework
+APHELION uses dynamic leverage from 1x to 100x based on signal confluence. The leverage tier is determined by how many of the 7 required conditions are met simultaneously.
+CONDITIONS MET
+LEVERAGE RANGE
+EXAMPLE POSITION ($10k ACCOUNT)
+7 / 7 — ALL conditions
+50x - 100x
+$500,000 - $1,000,000 notional
+5-6 / 7
+20x - 50x
+$200,000 - $500,000 notional
+3-4 / 7
+5x - 20x
+$50,000 - $200,000 notional
+Under 3 / 7
+1x - 2x
+$10,000 - $20,000 notional
+SENTINEL RED (any rule breach)
+0x
+No trade — hard block
+6.2 The 7 Confluence Conditions
+All 7 must be met for maximum leverage authorization:
+#
+CONDITION
+THRESHOLD
+MODULE
+1
+VPIN (informed flow)
+> 0.75
+DATA
+2
+MTF alignment
+4 / 4 timeframes agree
+DATA-MTF
+3
+Risk/Reward ratio
+> 3:1 minimum
+SENTINEL
+4
+CASSANDRA daily bias
+Correct direction day
+ARES-CASSANDRA
+5
+SHADOW pattern match
+Matches proven personal DNA
+SHADOW
+6
+PHANTOM metaorder
+> 70% complete
+PHANTOM
+7
+NEMESIS certification
+Level 5+ achieved
+NEMESIS
+6.3 Kelly Criterion Position Sizing
+TITAN applies the Kelly criterion to every approved trade:
+f = (b*p - q) / b
+where: b = R:R ratio, p = HYDRA win probability, q = 1 - p
+Maximum f applied: 2% of account equity per trade
+Fractional Kelly applied: f_actual = f * 0.25 (quarter-Kelly for safety)
+6.4 SENTINEL Hard Limits — NON-NEGOTIABLE
+These rules are hardcoded and cannot be modified by any component, vote, or evolution cycle. They are the only rules that SENTINEL enforces unconditionally:
+RULE
+LIMIT
+ACTION ON BREACH
+Maximum position size
+2% of account per trade
+Order rejected at execution
+Maximum simultaneous positions
+3 trades open at once
+New signals ignored until slot opens
+Stop loss
+Mandatory on every trade
+No SL = trade blocked
+Minimum R:R
+1.5:1
+Trade rejected
+Pre-news lockout
+5 min before high-impact events
+All signals suppressed
+Post-news lockout
+2 min after high-impact events
+All signals suppressed
+Friday close lockout
+30 min before market close
+All positions closed
+Daily bot loss limit
+TBD by sovereign
+L1: bot paused
+Daily total loss limit
+TBD by sovereign
+L2: all bots paused
+24-hour equity drawdown
+> 10%
+L3: broker disconnected, manual restart
+7. Build Phases — Engineering Roadmap
+APHELION is built in 16 sequential phases. No phase begins until the previous phase is validated. Each phase has clear acceptance criteria before proceeding.
+PHASE
+NAME
+COMPONENTS
+ACCEPTANCE CRITERIA
+1
+Data Foundation
+DATA module
+MT5 ticks flowing. All 60 features computing correctly. Unit tests passing.
+2
+Risk Layer
+SENTINEL (core rules only)
+All kill switches functional. Position sizing correct. News lockout working.
+3
+Backtesting Engine
+BACKTEST
+Tick-level replay accurate vs MT5 history. Walk-forward producing valid metrics.
+4
+HYDRA v1
+HYDRA-TFT only
+Walk-forward Sharpe > 1.0 on 2-year out-of-sample. 500 trades minimum.
+5
+Paper Trading
+SENTINEL + HYDRA-TFT + execution
+Paper trading live for 2 weeks. All SENTINEL rules respected. Zero errors.
+6
+TUI v1
+TUI F1, F5, F11, F12
+Live chart, P&L, risk display, logs all working in real time.
+7
+HYDRA Full Ensemble
+HYDRA-LSTM + CNN + MoE + Gate
+Ensemble Sharpe > 1.5 on OOS. Improvement over TFT-alone validated.
+8
+PROMETHEUS v1
+PROMETHEUS (NEAT only)
+Evolution loop running. Fitness improving generation over generation. Best genome beats baseline.
+9
+Money Makers
+VENOM, REAPER, APEX, WRAITH
+Each strategy independently backtested. Win rates meet targets. SENTINEL integration working.
+10
+ARES Integration
+ARES (all 4 roles)
+Sentiment signals directionally correct >60%. Veto performance tracked. Narrations generating.
+11
+Full PROMETHEUS
+PBT + Bayesian + full deploy pipeline
+Full autonomous evolution running. Genomes auto-promoting to paper → live. Zero manual intervention required.
+12
+Flow Intelligence
+PHANTOM + SPECTER + NEXUS
+Metaorder detection validated on known historical institutional events. SPECTER false positive rate < 5%.
+13
+Macro Intelligence
+ATLAS + ARGUS + HERALD + ORACLE
+All data feeds live. HERALD processing releases within 400ms. CASSANDRA accuracy > 58% on 90-day OOS.
+14
+Advanced ML
+KRONOS + ECHO + ECHO-X + FORGE + SHADOW
+KRONOS ensemble contribution positive. ECHO analog retrieval working. SHADOW trained on 50+ manual trades.
+15
+NEMESIS
+Full NEMESIS system
+APHELION achieving Gauntlet Level 5+ before live capital deployment. LEVIATHAN active.
+16
+Full System Optimization
+OLYMPUS + TITAN + GHOST + CIPHER + MERIDIAN
+GPU utilization 90%+. OLYMPUS auto-tuning working. All 20 modules integrated. System running autonomously.
+7.1 Timeline
+PERIOD
+PHASES
+MILESTONE
+March 2026
+1-3
+Data layer, SENTINEL, backtester complete
+April 2026
+4-6
+HYDRA v1 paper trading, TUI live
+May 2026
+7-9
+Full ensemble + PROMETHEUS + money makers
+June 2026
+10-13
+ARES + macro intelligence + full PROMETHEUS pipeline
+July 2026
+14-16
+Full system live. $10k loan capital deployment.
+Dec 2026
+APHELION
+50,000 decisions collected. GPT-OSS-120B fine-tuning begins.
+Feb 2027
+APHELION-120B
+Fine-tuned model complete. Single command deployment.
+8. NEMESIS — Historical Gauntlet Specification
+APHELION must pass all 7 Gauntlet levels before any live capital deployment. Each level introduces harder historical crises with increasing seed leverage and LEVIATHAN difficulty.
+8.1 Gauntlet Levels
+LEVEL
+ERA
+KEY EVENTS
+SEED LEVERAGE
+LEVIATHAN MODE
+1 — INITIATION
+1971-1986
+Nixon Shock, Oil Embargo, Volcker Rate Shock
+3x-5x
+PASSIVE
+2 — APPRENTICE
+1987-1999
+Black Monday, LTCM Collapse, Asian Crisis
+5x-10x
+MIRROR
+3 — JOURNEYMAN
+2000-2007
+Dot-Com crash, 9/11, Iraq War
+10x-20x
+HUNTER
+4 — VETERAN
+2008
+Bear Stearns, Lehman, QE1 announcement
+15x-30x
+FOGGER
+5 — ELITE
+2020
+COVID crash, Fed unlimited QE, vaccine spike
+20x-40x
+AVALANCHE
+6 — MASTER
+All eras stacked
+All events in chronological order
+30x-50x
+ALL MODES
+7 — NEMESIS MODE
+Random order
+All events random order, random seed, LEVIATHAN max power
+3x-50x random
+MAXIMUM
+8.2 VERDICT Scoring Requirements
+SCORE
+THRESHOLD
+MEANING
+< 40
+FAIL
+APHELION not ready. Continue training.
+40-60
+CONDITIONAL FAIL
+Needs more NEMESIS training cycles.
+60-80
+BORDERLINE
+Can proceed to extended paper trading only.
+80-90
+PASS
+Deploy to paper trading with real market data.
+> 90
+DISTINCTION
+Ready for live capital deployment.
+8.3 LEVIATHAN Attack Strategies
+STRATEGY
+DESCRIPTION
+WHAT APHELION MUST DO
+MIRROR
+Copies APHELION positions then immediately reverses them
+Detect mirroring pattern, delay entries, vary position sizes
+HUNTER
+Detects APHELION's stop loss levels, pushes price to hit them then reverses
+Use non-round SL levels, mental stops not market stops
+FOGGER
+Generates fake signals in all indicators (VPIN, entropy, OFI)
+Cross-validate signals across independent sources
+AVALANCHE
+Waits for 3+ open positions then triggers cascade event
+Limit concurrent positions, stagger entries
+9. APHELION-120B — Fine-Tuning Specification
+The ultimate goal of the APHELION system. After 6 months of live trading, the 20-module stack is distilled into a single fine-tuned large language model.
+9.1 Base Model: GPT-OSS-120B
+FIELD
+SPECIFICATION
+Model
+OpenAI GPT-OSS-120B
+Architecture
+Mixture of Experts (MoE) Transformer
+Total parameters
+117B
+Active parameters per token
+5.1B (MoE efficiency)
+Context length
+131,072 tokens
+License
+Apache 2.0 — fully commercial use permitted
+Hugging Face
+openai/gpt-oss-120b
+Ollama
+ollama pull gpt-oss:120b
+VRAM (4-bit quantized)
+~30GB (CPU offload required on L4 24GB)
+Benchmark
+Near-parity with o4-mini on reasoning benchmarks
+9.2 Training Data Schema
+Every trade decision is logged in the following JSON schema compatible with GPT-OSS-120B Harmony format:
+{"timestamp": "2026-07-15T14:22:08Z",
+ "market_state": {
+   "vpin": 0.71, "entropy": "LOW", "ofi": 847, "hawkes_ratio": 1.42,
+   "mtf_alignment": 4, "regime": "TRENDING", "session": "LONDON",
+   "cassandra_bias": "BULLISH", "cassandra_confidence": 0.74,
+   "oracle_regime": "DOVISH_HOLD", "atlas_bias": "BULLISH",
+   "phantom_progress": 67, "specter_score": 12,
+   "shadow_match": true, "shadow_confidence": 0.78
+ },
+ "component_votes": {
+   "HYDRA": {"signal": "LONG", "confidence": 0.83},
+   "ARES": {"decision": "CONFIRM", "reasoning": "..."},
+   "SENTINEL": {"approved": true, "size": 0.012},
+   "final_vote": 847, "total_votes": 1000, "result": "FULL_SIZE"
+ },
+ "trade": {"direction": "LONG", "size": 0.012, "sl": 2847.20, "tp": 2861.40},
+ "outcome": {"pnl": 42.20, "pnl_pct": 0.42, "win": true, "hold_minutes": 18},
+ "ares_reasoning": "Institutional accumulation detected on 15m. London breakout..."}
+9.3 Fine-Tuning Pipeline
+PHASE
+METHOD
+HARDWARE
+DURATION
+COST
+Dataset collection
+Phoenix v7 live trading
+GCP VM (existing)
+6 months
+$0 additional
+SFT Phase
+Supervised fine-tuning on 50k decisions
+2x H100 80GB (rented)
+~36 hours
+~$220
+RLHF Phase
+Reward model on trade outcomes
+2x H100 80GB (rented)
+~12 hours
+~$72
+DPO Phase
+Direct Preference Optimization
+2x H100 80GB (rented)
+~8 hours
+~$48
+Evaluation
+Paper trading harness
+GCP VM (existing)
+2 weeks
+$0 additional
+Quantization
+GGUF 4-bit with llama.cpp
+GCP VM (existing)
+~2 hours
+$0 additional
+Deployment
+Ollama on GCP VM with CPU offload
+GCP VM (existing)
+< 1 hour
+$0 additional
+9.4 Performance Targets
+METRIC
+TARGET
+COMPARISON
+Decision accuracy vs Phoenix v7
+> 85%
+Full 20-module stack baseline
+Inference latency
+< 40ms
+vs 200ms multi-component pipeline
+VRAM usage (4-bit)
+< 30GB with CPU offload
+vs 22GB for full pipeline
+Deployment command
+ollama run aphelion-120b
+vs launching 20 modules
+Training data requirements
+50,000 labeled decisions
+6 months of live trading
+10. File Structure & Directory Layout
+Complete directory structure for the APHELION codebase. Every file has a single responsibility.
+aphelion/
+├── core/
+│   ├── __init__.py
+│   ├── event_bus.py         # Async pub/sub message passing
+│   ├── config.py            # All system constants
+│   ├── data_layer.py        # MT5 tick stream → clean bars
+│   ├── clock.py             # Market hours, session detection
+│   └── registry.py          # Component health tracking
+│
+├── features/
+│   ├── engine.py            # Master 60+ feature pipeline
+│   ├── microstructure.py    # VPIN, OFI, entropy, Hawkes
+│   ├── market_structure.py  # OB, FVG, swing highs/lows
+│   ├── volume_profile.py    # Delta, CVD, POC, VAH/VAL
+│   ├── vwap.py              # Anchored VWAP + bands
+│   ├── sessions.py          # Session flags + calendar
+│   ├── mtf.py               # Multi-timeframe alignment
+│   └── cointegration.py     # Engle-Granger, Johansen
+│
+├── intelligence/
+│   ├── hydra/
+│   │   ├── tft.py           # Temporal Fusion Transformer
+│   │   ├── lstm.py          # BiLSTM + self-attention
+│   │   ├── cnn.py           # ResNet candle vision
+│   │   ├── moe.py           # Mixture of Experts
+│   │   ├── ensemble.py      # HYDRA-X attention gate
+│   │   └── trainer.py       # Training loop + checkpoints
+│   ├── kronos/
+│   │   ├── foundation.py    # TimesFM wrapper
+│   │   └── finetune.py      # XAU fine-tuning
+│   ├── echo/
+│   │   ├── vector_db.py     # FAISS database
+│   │   ├── encoder.py       # 500-bar → embedding
+│   │   ├── retrieval.py     # KNN analog search
+│   │   └── echo_x.py        # Post-2020 database
+│   ├── forge/
+│   │   ├── maml.py          # Meta-learning adapter
+│   │   └── regime_detector.py # Rapid regime detection
+│   └── shadow/
+│       ├── recorder.py      # Manual trade logger
+│       ├── model.py         # XGBoost on your trades
+│       └── signal.py        # SHADOW_SIGNAL generator
+│
+├── evolution/
+│   ├── prometheus/
+│   │   ├── engine.py        # Master evolution loop
+│   │   ├── genome.py        # Genome schema + YAML
+│   │   ├── neat.py          # NEAT topology evolution
+│   │   ├── pbt.py           # Population-Based Training
+│   │   ├── bayesian.py      # Optuna TPE search
+│   │   ├── fitness.py       # Multi-objective fitness
+│   │   ├── backtest_worker.py # Parallel worker (1 per core)
+│   │   └── deployment.py    # Genome promotion pipeline
+│   ├── cipher/
+│   │   ├── decay_tracker.py # SHAP 30d vs 90d ratio
+│   │   └── halflife.py      # Exponential decay fitting
+│   ├── meridian/
+│   │   ├── granger.py       # Granger causality tests
+│   │   └── tf_weights.py    # Dynamic TF weight vector
+│   └── zeus/
+│       ├── stress_tester.py # Pre-deploy stress tests
+│       ├── adversary.py     # Adversarial bot population
+│       └── gan_regimes.py   # Synthetic regime GAN
+│
+├── nemesis/
+│   ├── pandora/
+│   │   ├── market_gen.py    # Extreme market generator
+│   │   ├── scenarios.py     # 6 extreme scenario types
+│   │   └── seed_leverage.py # Random leverage engine
+│   ├── leviathan/
+│   │   ├── villain.py       # Adversarial enemy bot
+│   │   ├── strategies.py    # MIRROR/HUNTER/FOGGER/AVALANCHE
+│   │   └── evolution.py     # LEVIATHAN NEAT evolution
+│   ├── chronos/
+│   │   ├── compressor.py    # Time compression (1x-500x)
+│   │   ├── replay.py        # Historical replay engine
+│   │   └── gauntlet.py      # 7 levels + event library
+│   └── verdict/
+│       ├── scorer.py        # 6-metric scoring
+│       └── certifier.py     # Level certification
+│
+├── macro/
+│   ├── oracle/              # Central bank decoder
+│   ├── atlas/               # Geopolitical + COT + macro
+│   ├── nexus/               # Cross-asset correlation
+│   ├── argus/               # Web scraping + FinBERT
+│   └── herald/              # Economic data releases
+│
+├── flow/
+│   ├── phantom/             # Institutional flow detection
+│   └── specter/             # Manipulation detection
+│
+├── risk/
+│   ├── sentinel/            # Hardcoded risk rules
+│   │   ├── risk.py          # Kill switches (NEVER modify)
+│   │   ├── sizing.py        # Kelly position sizing
+│   │   └── execution/
+│   │       ├── mt5.py       # Live MT5 execution
+│   │       └── paper.py     # Paper trading
+│   └── titan/               # Portfolio allocation
+│
+├── money/                   # Standalone money makers
+│   ├── venom.py             # Statistical arbitrage
+│   ├── reaper.py            # Liquidity vacuum
+│   ├── apex.py              # Volatility breakout
+│   ├── wraith.py            # News reversion
+│   └── ghost.py             # Stealth execution
+│
+├── ares/                    # LLM brain
+│   ├── model.py             # Mixtral / GPT-OSS wrapper
+│   ├── sentiment.py         # News → signal
+│   ├── reasoning.py         # Trade confirmation/veto
+│   ├── strategist.py        # Hypothesis generation
+│   ├── narrator.py          # Trade narration
+│   ├── cassandra.py         # 24H direction predictor
+│   ├── oracle.py            # Macro regime decoder
+│   ├── fund_report.py       # Daily fund report
+│   └── prompts/             # All system prompts
+│
+├── governance/
+│   ├── olympus/             # System governor
+│   ├── council/             # Voting engine
+│   └── hierarchy.py         # 5-tier structure
+│
+├── backtest/
+│   ├── engine.py            # Tick replay
+│   ├── metrics.py           # All performance metrics
+│   ├── monte_carlo.py       # 500-path simulation
+│   └── reporter.py          # Report generator
+│
+├── aphelion_model/          # APHELION-120B pipeline
+│   ├── collector.py         # Decision data logger
+│   ├── schema.py            # Training data schema
+│   ├── finetune.py          # GPT-OSS-120B SFT script
+│   ├── eval.py              # Paper trading evaluation
+│   └── export.py            # GGUF quantization
+│
+├── tui/                     # Terminal UI (12 screens)
+│   ├── app.py               # Textual main app
+│   ├── header.py            # Global header widget
+│   └── screens/             # F1-F12 screen modules
+│
+├── data/                    # Market data storage
+│   ├── ticks/               # Raw MT5 ticks (compressed)
+│   ├── bars/                # OHLCV bars (all timeframes)
+│   ├── features/            # Precomputed feature cache
+│   ├── gauntlet/            # Historical crisis datasets
+│   └── external/            # COT, FRED, GDELT cache
+│
+├── models/                  # Saved model weights
+│   ├── hydra/               # PyTorch checkpoints
+│   ├── kronos/              # TimesFM weights
+│   ├── echo/                # FAISS indexes
+│   ├── ares/                # LLM GGUF weights
+│   ├── shadow/              # Personal XGBoost model
+│   └── cassandra/           # Direction predictor
+│
+├── genomes/                 # PROMETHEUS genome files
+│   ├── live/                # Currently deployed
+│   ├── paper/               # Paper trading
+│   ├── archive/             # Historical all gens
+│   └── hall_of_fame/        # Best ever evolved
+│
+├── nemesis_sessions/        # Training session records
+│
+├── aphelion_training_data/  # 50k decisions for LLM
+│
+└── logs/
+    ├── trades.db            # Every trade (SQLite)
+    ├── votes.db             # Every council vote
+    ├── ares.db              # Every LLM reasoning
+    ├── nemesis.db           # Every NEMESIS session
+    ├── system.log           # System events
+    └── audit.log            # Immutable audit trail
+11. Profit Projections & Performance Model
+11.1 Edge Decomposition — $10,000 Account
+MODULE
+EDGE SOURCE
+DAILY CONTRIBUTION
+HYDRA (TFT+LSTM+CNN+MoE+Gate)
+Ensemble signal accuracy
++0.40%/day
+HYDRA-X (dynamic weighting)
+Regime-optimal sub-model amplification
++0.18%/day
+KRONOS (TimesFM)
+Multi-horizon probabilistic forecasting
++0.09%/day
+PROMETHEUS (evolution)
+Continuously improving genomes
++0.22%/day
+FORGE (MAML)
+Real-time regime adaptation
++0.11%/day
+VENOM (stat arb)
+Cointegration mean reversion
++0.31%/day
+REAPER (liquidity)
+Pre-vacuum positioning
++0.24%/day
+APEX (breakout)
+1:3 R:R compression trades
++0.19%/day
+WRAITH (reversion)
+News spike fading
++0.14%/day
+SPECTER + PHANTOM
+Manipulation avoidance + flow riding
++0.25%/day
+ARES (LLM reasoning)
+Context-aware trade confirmation
++0.13%/day
+CASSANDRA (24H bias)
+Correct daily directional bias
++0.10%/day
+SHADOW (personal DNA)
+Replicates user's manual edge
++0.28%/day
+SENTINEL (risk control)
+Prevents catastrophic loss days
++0.11%/day (loss prevention)
+OLYMPUS (auto-tune)
+System always at peak config
++0.14%/day
+Signal correlation discount
+Overlapping signals between components
+-0.64%/day
+Slippage + spread
+Execution costs
+-0.15%/day
+Model decay + errors
+Imperfect signal days
+-0.30%/day
+11.2 Summary Daily Return Estimates
+SCENARIO
+DAILY RETURN
+ASSUMPTION
+Bear case
+1.10%/day
+System underperforms, multiple bad weeks, slow PROMETHEUS convergence
+Conservative
+1.80%/day
+System working well, some bad days, warm-up period included
+Realistic
+2.80%/day
+System at near-theoretical peak, low drawdown months
+11.3 6-Month Compounding Projection ($10,000 start, 22 trading days/month)
+MONTH
+BEAR (1.1%/day)
+CONSERVATIVE (1.8%/day)
+REALISTIC (2.8%/day)
+Month 1
+$13,900
+$17,100
+$22,900
+Month 2
+$19,300
+$29,200
+$52,500
+Month 3
+$26,800
+$49,900
+$120,300
+Month 4
+$37,200
+$85,300
+$275,600
+Month 5
+$51,700
+$145,800
+$631,400
+Month 6
+$71,800
+$249,200
+$1,446,000
+Total return
++618%
++2,392%
++14,360%
+Planning number: The conservative estimate of $249,200 in 6 months from $10,000 is the number to build toward. It assumes the system works well but not perfectly, has bad weeks, and takes 4-6 weeks to fully warm up as PROMETHEUS evolves its first strong genomes.
+12. Glossary of Terms
+TERM
+DEFINITION
+Alpha
+Trading edge above a random benchmark. The reason a strategy makes money.
+Cointegration
+A long-run equilibrium relationship between two price series that tends to revert to a mean spread.
+CUDA
+NVIDIA's GPU parallel computing platform. Required for all PyTorch neural network training.
+Deflated Sharpe Ratio (DSR)
+Sharpe ratio adjusted for multiple testing, non-normality, and autocorrelation. More conservative than raw Sharpe.
+Genome
+A complete specification of a trading strategy including model architecture, hyperparameters, and feature selection. Evolved by PROMETHEUS.
+GGUF
+File format for quantized LLM weights compatible with llama.cpp. Allows large models to run on consumer hardware.
+Granger Causality
+A statistical test for whether past values of variable X improve the prediction of variable Y beyond Y's own history.
+Harmony Format
+OpenAI's instruction format for GPT-OSS models. Required for correct model behavior.
+Hawkes Process
+A self-exciting point process where each event increases the probability of future events. Used to model clustered order arrivals.
+Kelly Criterion
+Mathematical formula for optimal bet sizing: f = (bp - q) / b. Maximizes long-run capital growth.
+MAML
+Model-Agnostic Meta-Learning. Trains a model to adapt quickly to new tasks with few gradient steps.
+MoE
+Mixture of Experts. Neural architecture where different sub-networks specialize in different input types.
+Monte Carlo Simulation
+Running thousands of random simulations to estimate probability distributions of outcomes.
+NEAT
+NeuroEvolution of Augmenting Topologies. Genetic algorithm that evolves both neural network weights and structure.
+OFI
+Order Flow Imbalance. Net signed volume across bid and ask sides. Directional indicator of aggressive order flow.
+Overfitting
+When a model learns historical noise rather than genuine signal. Performs well in-sample but poorly out-of-sample.
+PBT
+Population-Based Training (DeepMind). Multiple models train in parallel; underperformers copy and mutate top performers.
+SHAP
+SHapley Additive exPlanations. Game-theoretic method for attributing model predictions to individual features.
+TFT
+Temporal Fusion Transformer. Transformer architecture designed for multi-horizon time series forecasting with interpretability.
+VPIN
+Volume-Synchronized Probability of Informed Trading. Measures order flow toxicity. High values indicate informed traders active.
+Walk-Forward Validation
+Train on rolling window of past data, test on next unseen period. Most realistic backtest methodology.
+XGBoost
+Extreme Gradient Boosting. GPU-accelerated gradient boosted tree ensemble. Fast, interpretable, strong baseline for tabular data.

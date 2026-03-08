@@ -1,0 +1,92 @@
+﻿python : 2026-03-07 
+23:53:06.822 | INFO     | _
+_main__:test_train_loop:62 
+- Starting Phase 4 
+Validation...
+At line:1 char:58
++ ... lion; .\venv\Scripts\
+Activate.ps1; python 
+train_hydra.py 2>&1 | 
+Out-F ...
++                          
+              
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo         
+     : NotSpecified:     
+(2026-03-07 23:5...4     
+Validation...:Strin    g) 
+[], RemoteExcepti    on
+    + FullyQualifiedErro   
+ rId : NativeCommandE    
+rror
+ 
+2026-03-07 23:53:06.822 | 
+INFO     | __main__:generat
+e_synthetic_data:20 - 
+Generating 500 synthetic 
+bars for training...
+2026-03-07 23:53:06.846 | 
+INFO     | __main__:test_tr
+ain_loop:68 - Building 
+HYDRA Datasets...
+2026-03-07 23:53:06.858 | 
+INFO     | __main__:test_tr
+ain_loop:75 - Dataset 
+generated. Train: 263, 
+Val: 75, Test: 38
+C:\Users\marti\Aphelion\aph
+elion\intelligence\hydra\tr
+ainer.py:132: 
+FutureWarning: `torch.cuda.
+amp.GradScaler(args...)` 
+is deprecated. Please use `
+torch.amp.GradScaler('cuda'
+, args...)` instead.
+  self._scaler = GradScaler
+(enabled=cfg.use_amp)
+2026-03-07 23:53:09.399 | 
+INFO     | __main__:test_tr
+ain_loop:98 - Beginning 
+Training...
+C:\Users\marti\Aphelion\ven
+v\Lib\site-packages\torch\u
+tils\data\dataloader.py:775
+: UserWarning: 
+'pin_memory' argument is 
+set as true but no 
+accelerator is found, then 
+device pinned memory won't 
+be used.
+  super().__init__(loader)
+C:\Users\marti\Aphelion\aph
+elion\intelligence\hydra\tr
+ainer.py:216: 
+FutureWarning: `torch.cuda.
+amp.autocast(args...)` is 
+deprecated. Please use `tor
+ch.amp.autocast('cuda', 
+args...)` instead.
+  with autocast(enabled=cfg
+.use_amp):
+C:\Users\marti\Aphelion\aph
+elion\intelligence\hydra\tr
+ainer.py:279: 
+FutureWarning: `torch.cuda.
+amp.autocast(args...)` is 
+deprecated. Please use `tor
+ch.amp.autocast('cuda', 
+args...)` instead.
+  with autocast(enabled=cfg
+.use_amp):
+2026-03-07 23:54:13.737 | 
+INFO     | __main__:test_tr
+ain_loop:101 - Training 
+Complete!
+2026-03-07 23:54:13.738 | 
+INFO     | __main__:test_tr
+ain_loop:102 - Final Val 
+Loss: 0.5712
+2026-03-07 23:54:13.738 | 
+INFO     | __main__:test_tr
+ain_loop:103 - Best Sharpe 
+Proxy: 71.16

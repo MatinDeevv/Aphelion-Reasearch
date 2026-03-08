@@ -1,335 +1,526 @@
-# APHELION
+﻿# APHELION
 
-Fully autonomous XAU/USD (Gold) trading system built on a 20-module architecture with tiered governance, hardcoded risk limits, and 60+ engineered features per bar.
+Autonomous XAU/USD trading system with strict risk governance, engineered feature pipelines, backtesting infrastructure, and an in-progress neural intelligence layer.
 
----
-
-## Architecture
-
-APHELION uses a 5-tier governance hierarchy where modules vote on trade decisions with weighted authority. Every order must survive SENTINEL validation before it reaches the broker.
-
-| Tier | Role | Votes | Modules |
-|------|------|-------|---------|
-| **Sovereign** | System Core | ∞ | Event Bus, Clock, Registry |
-| **Council** | Strategic Decision | 100 | OLYMPUS, SENTINEL, ARES |
-| **Minister** | Intelligence | 40 | HYDRA, PROMETHEUS, PHANTOM, NEMESIS, FORGE, ATLAS, DATA |
-| **Commander** | Execution | 10 | BACKTEST, VENOM, REAPER, APEX, WRAITH, SHADOW, KRONOS, ECHO, CASSANDRA, ORACLE, TITAN, GHOST |
-| **Operator** | Support | 1 | FUND |
-
-### Module Overview
-
-```
-OLYMPUS      System Governor & Auto-Tuner
-SENTINEL     Supreme Risk Authority (hardcoded, immutable limits)
-ARES         LLM Brain (Mixtral 8x7B → GPT-OSS-120B)
-HYDRA        Neural Intelligence Core (TFT+LSTM+CNN+MoE+Gate, ~314M params)
-PROMETHEUS   Evolution Engine (NEAT + PBT + Bayesian)
-PHANTOM      Institutional Flow Detection
-NEMESIS      War Simulator (7 Gauntlet levels)
-FORGE        Online Learning (MAML)
-ATLAS        Macro Intelligence
-DATA         Data Layer & 60+ Features
-BACKTEST     Backtesting Engine & Monte Carlo
-VENOM        Statistical Arbitrage (Cointegration)
-REAPER       Momentum/Trend Following
-APEX         Breakout Detection
-WRAITH       Mean Reversion
-SHADOW       Personal Trading DNA
-KRONOS       TimesFM Foundation Model
-ECHO         Historical Analog Matching
-CASSANDRA    24H Direction Predictor
-ORACLE       Macro Regime Decoder
-TITAN        Portfolio Allocation
-GHOST        Stealth Execution
-FUND         Performance Reporting
-```
+> Last repository audit: **2026-03-08 (America/Toronto)**
+> 
+> Spec reference: `C:\Users\marti\Aphelion\APHELION_Engineering_Spec_v1.docx`
 
 ---
 
-## Project Structure
+## Table of Contents
 
-```
-aphelion/
-  core/             Event bus, config, data layer, clock, registry
-  features/         60+ feature engine (microstructure, market structure,
-                    volume, VWAP, sessions, MTF, cointegration)
-  risk/
-    sentinel/       SENTINEL runtime enforcement
-      core.py             SentinelCore — position tracking, L3 disconnect
-      validator.py        TradeValidator — 7-rule pre-trade filter
-      position_sizer.py   Quarter-Kelly sizing with hard caps
-      circuit_breaker.py  CircuitBreaker — 3-level drawdown response
-      monitor.py          SentinelMonitor — 100ms stop-loss polling loop
-      execution/
-        enforcer.py       ExecutionEnforcer — final order gate
-    titan/          TITAN portfolio allocation (Phase 9)
-  intelligence/     HYDRA, KRONOS, ECHO, FORGE, SHADOW
-  evolution/        PROMETHEUS, CIPHER, MERIDIAN, ZEUS
-  nemesis/          PANDORA, LEVIATHAN, CHRONOS, VERDICT
-  macro/            ORACLE, ATLAS, NEXUS, ARGUS, HERALD
-  flow/             PHANTOM, SPECTER
-  money/            VENOM, REAPER, APEX, WRAITH, GHOST
-  ares/             LLM brain, sentiment, reasoning, strategist
-  governance/       OLYMPUS, COUNCIL
-  backtest/         Engine, metrics, Monte Carlo
-  aphelion_model/   APHELION-120B fine-tune pipeline
-  tui/              Terminal UI (12 screens)
-tests/
-  core/             Config, clock, event bus, data layer, registry
-  features/         Microstructure, market structure, volume profile,
-                    VWAP, MTF, cointegration
-  risk/             Circuit breaker, position sizer, SENTINEL core
-  integration/      End-to-end pipeline and SENTINEL integration tests
-```
+- [1. What This Repository Is](#1-what-this-repository-is)
+- [2. Current Reality vs Engineering Spec](#2-current-reality-vs-engineering-spec)
+- [3. Quick Start](#3-quick-start)
+- [4. Development Commands](#4-development-commands)
+- [5. Project Structure](#5-project-structure)
+- [6. Architecture Overview](#6-architecture-overview)
+- [7. Phase-by-Phase Compliance Audit](#7-phase-by-phase-compliance-audit)
+- [8. Module Status Matrix (20-Module Plan)](#8-module-status-matrix-20-module-plan)
+- [9. Implemented Systems](#9-implemented-systems)
+- [10. HYDRA (Phase 4+) Status](#10-hydra-phase-4-status)
+- [11. Testing Status](#11-testing-status)
+- [12. Gaps to Reach Full Spec](#12-gaps-to-reach-full-spec)
+- [13. Suggested Near-Term Build Order](#13-suggested-near-term-build-order)
+- [14. Contribution Workflow](#14-contribution-workflow)
+- [15. License and Confidentiality](#15-license-and-confidentiality)
 
 ---
 
-## Current Status
+## 1. What This Repository Is
 
-### Phase 1: Data Foundation — Complete
+APHELION is designed as a multi-module autonomous trading platform centered on **XAU/USD**. The spec defines a 16-phase build with 20 major modules and 100+ sub-components.
 
-Core infrastructure and feature engine. 187 tests passing.
+This repository currently contains:
 
-**Core components:**
-- Async priority event bus (CRITICAL SENTINEL events always dispatched first, even when queue is full)
-- `MarketClock` — session detection, news lockout, Friday close, calendar markers, `is_trading_session`
-- `ComponentRegistry` — health scoring, tier-based module lifecycle management
-- `DataLayer` — MT5 tick ingestion, OHLCV aggregation across M1/M5/M15/H1, data quality validation, Parquet/CSV file loaders for backtesting
-
-**60+ engineered features across 7 sub-engines:**
-
-| Sub-engine | Features |
-|-----------|---------|
-| **Microstructure** | VPIN, OFI, tick entropy, Hawkes intensity, micro-price divergence, spread dynamics, quote depth |
-| **Market Structure** | Order blocks, fair value gaps, swing highs/lows, liquidity pools, breaker blocks, volume imbalances, CHoCH |
-| **Volume Profile** | Volume delta, cumulative delta (CVD), point of control (POC), value area high/low (VAH/VAL), absorption |
-| **VWAP** | Session VWAP, anchored VWAP, rolling VWAP with ±1σ and ±2σ bands |
-| **Sessions** | Session flags, time-to-open/close, news proximity, `is_trading_session`, calendar markers |
-| **Multi-Timeframe** | Alignment scoring across M1/M5/M15/H1 with weighted directional consensus |
-| **Cointegration** | Engle-Granger + `statsmodels` ADF for XAU vs DXY, real yields, silver; spread z-scores and half-life |
-
-**Phase 1 fixes applied (pre-Phase 2 hardening):**
-- `cointegration.py` — replaced hand-rolled ADF (hardcoded MacKinnon buckets) with `statsmodels.tsa.stattools.adfuller`; real p-values via `result[1]`
-- `clock.py` — `session_features()` now includes `"is_trading_session"` key
-- `config.py` — `BACKTEST` module registered (Tier.COMMANDER) for Phase 3
-- `data_layer.py` — `load_from_parquet()` and `load_from_csv()` added; validate required columns, return DataFrames without touching `self._bars`
+- A solid **core runtime** (event bus, data layer, clock, registry)
+- A substantial **feature stack** (microstructure, market structure, volume, VWAP, MTF, cointegration)
+- A strong **risk layer** (`SENTINEL`) with hardcoded limits and enforcement components
+- A substantial **backtest stack** (engine, broker sim, portfolio, metrics, Monte Carlo, walk-forward, analytics)
+- An in-progress **HYDRA** neural layer (TFT + LSTM + CNN + MoE + ensemble scaffolding)
+- Many other planned modules still as package scaffolding only
 
 ---
 
-### Phase 2: Risk Layer (SENTINEL) — Complete
+## 2. Current Reality vs Engineering Spec
 
-Real-time enforcement layer that wraps every trade from proposal to execution. Every order passes through a 4-stage pipeline before it can reach the broker.
+The engineering spec (`APHELION_Engineering_Spec_v1.docx`) is a **target architecture** and roadmap. The repository is currently a **partial implementation** of that roadmap.
 
-**Order enforcement pipeline:**
+### High-level status summary
 
-```
-TradeProposal
-    │
-    ▼
-[SentinelCore.is_trading_allowed()]   ← L3, news lockout, Friday lockout, market hours
-    │
-    ▼
-[TradeValidator.validate()]           ← 7 immutable rules checked in sequence
-    │
-    ▼
-[CircuitBreaker.apply_multiplier()]   ← scales size down based on drawdown level
-    │
-    ▼
-[ExecutionEnforcer.approve_order()]   ← re-validates adjusted proposal, logs rejections
-    │
-    ▼
-  Broker
-```
+- Phase 1 (Data Foundation): **Implemented and tested**
+- Phase 2 (Risk Layer): **Implemented and tested**
+- Phase 3 (Backtesting Engine): **Implemented in code, partially validated**
+- Phase 4 (HYDRA v1): **Implemented in code, not yet validated against spec acceptance criteria**
+- Phases 5-16: **Mostly not implemented yet (scaffold only)**
 
-**`SentinelCore` (`core.py`)**
-- Tracks all open positions, account equity, session peak equity, and daily P&L
-- Computes real-time drawdown; triggers L3 disconnect at 10% and publishes CRITICAL event
-- `is_trading_allowed()` gates on L3 state, news lockout, Friday lockout, and market hours
-- `get_open_positions()` exposes position list to `SentinelMonitor`
+### Important README correction
 
-**`TradeValidator` (`validator.py`)**
-- Validates every `TradeProposal` against 7 hardcoded rules (all must pass):
-  1. Trading allowed (no L3 / lockout / closed market)
-  2. Stop-loss present and positive
-  3. Stop-loss correctly placed for direction (LONG below entry, SHORT above)
-  4. Risk:reward ≥ 1.5:1
-  5. Simultaneous open positions < 3
-  6. Position size ≤ 2% of account
-  7. Total exposure ≤ 6% (3 × 2%)
-  8. Symbol is XAUUSD
-
-**`PositionSizer` (`position_sizer.py`)**
-- Quarter-Kelly sizing: `full_kelly × 0.25`, hard-capped at 2%
-- `compute_size_pct(win_rate, avg_win, avg_loss, confidence)` — scales by signal confidence
-- `pct_to_lots()` converts account percentage to broker lot size
-- `validate_size()` checks SENTINEL limits before sizing is committed
-
-**`CircuitBreaker` (`circuit_breaker.py`)**
-- Monitors equity drawdown in real time with 3 escalating responses:
-
-  | Level | Drawdown Threshold | Response | Size Multiplier |
-  |-------|--------------------|----------|----------------|
-  | NORMAL | < 5% | No action | 1.00× |
-  | L1 | ≥ 5% | Reduce size, HIGH alert | 0.50× |
-  | L2 | ≥ 7.5% | Reduce size further, HIGH alert | 0.25× |
-  | L3 | ≥ 10% | Full halt, close all, CRITICAL kill signal | 0.00× |
-
-- L1 auto-resets to NORMAL when drawdown recovers below 5%
-- `apply_multiplier(proposed_size_pct)` clamps output to `[0.0, SENTINEL.max_position_pct]`
-- Full trigger history kept; last 10 events returned in `get_summary()`
-
-**`SentinelMonitor` (`monitor.py`)**
-- Async background task polling every 100ms via `asyncio.create_task`
-- Checks every open position against current price per direction:
-  - LONG: breach if `price ≤ stop_loss`
-  - SHORT: breach if `price ≥ stop_loss`
-- Publishes CRITICAL `SL_BREACH` event with position ID, entry, SL, and current price on each hit
-- `_check_friday_close()` stubbed for Phase 5 (force-close 30 min before Friday 21:00 UTC)
-
-**`ExecutionEnforcer` (`execution/enforcer.py`)**
-- Final gate before the broker: applies CB multiplier → re-runs full `TradeValidator`
-- Returns `(approved: bool, reason: str, final_size_pct: float)`
-- Maintains rolling rejection log (`deque(maxlen=1000)`) with UTC timestamp and proposing module name
-- `get_rejection_summary()` — approved count, rejected count, rejection rate, last 10 rejections
+Older README sections marked Phase 3 and Phase 4 as planned only. That is outdated relative to the current codebase. This README reflects the current repository state.
 
 ---
 
-### Build Phases
+## 3. Quick Start
 
-| # | Phase | Status |
-|---|-------|--------|
-| 1 | Data Foundation (DATA module) | **Done** |
-| 2 | Risk Layer (SENTINEL runtime enforcement) | **Done** |
-| 3 | Backtesting Engine | Planned |
-| 4 | HYDRA v1 (TFT only) | Planned |
-| 5 | Paper Trading | Planned |
-| 6 | TUI v1 | Planned |
-| 7 | HYDRA Full Ensemble | Planned |
-| 8 | PROMETHEUS v1 (NEAT only) | Planned |
-| 9 | Money Makers (VENOM, REAPER, APEX, WRAITH) | Planned |
-| 10 | ARES Integration | Planned |
-| 11 | Full PROMETHEUS | Planned |
-| 12 | Flow Intelligence (PHANTOM, SPECTER, NEXUS) | Planned |
-| 13 | Macro Intelligence (ATLAS, ARGUS, HERALD, ORACLE) | Planned |
-| 14 | Advanced ML (KRONOS, ECHO, FORGE, SHADOW) | Planned |
-| 15 | NEMESIS War Simulator | Planned |
-| 16 | Full System Optimization | Planned |
+### Prerequisites
 
----
+- Python `>=3.11`
+- Optional: MetaTrader5 terminal for live/paper connectivity
+- Optional: CUDA-capable GPU for neural training/inference
 
-## Risk Controls (SENTINEL)
-
-SENTINEL enforces hardcoded, immutable limits via a frozen dataclass — any attempted modification raises `AttributeError` at runtime. No module, including the evolution engine, can override these.
-
-| Rule | Limit |
-|------|-------|
-| Max position size | 2% of account per trade |
-| Max simultaneous positions | 3 |
-| Max total exposure | 6% of account (3 × 2%) |
-| Stop-loss | Mandatory on every trade |
-| Min risk:reward | 1.5:1 |
-| News lockout (pre) | 5 min before high-impact events |
-| News lockout (post) | 2 min after high-impact events |
-| Friday close lockout | 30 min before 21:00 UTC |
-| L3 circuit breaker | 10% daily equity drawdown → full halt |
-| Kelly fraction | Quarter-Kelly (0.25), hard cap 2% |
-
----
-
-## Leverage
-
-Dynamic leverage from 1× to 100× based on the number of confluence conditions met:
-
-| Conditions Met | Leverage Range |
-|----------------|----------------|
-| 7 (all) | 50× – 100× |
-| 5–6 | 20× – 50× |
-| 3–4 | 5× – 20× |
-| 0–2 | 1× – 2× |
-
----
-
-## Setup
-
-### Requirements
-
-- Python 3.11+
-- MetaTrader5 terminal (for live/paper trading — optional for development)
-
-### Installation
+### Install
 
 ```bash
-# Clone the repository
 git clone https://github.com/MatinDeevv/Aphelion-Reasearch.git
 cd Aphelion-Reasearch
 
-# Create virtual environment
 python -m venv venv
-source venv/bin/activate        # Linux/macOS
-venv\Scripts\activate           # Windows
+# Windows
+venv\Scripts\activate
+# Linux/macOS
+# source venv/bin/activate
 
-# Install core dependencies
 pip install -e .
-
-# Install with all optional dependencies
+# Optional extras
+pip install -e ".[ml]"
+pip install -e ".[broker]"
+pip install -e ".[tui]"
+pip install -e ".[dev]"
+# Everything
 pip install -e ".[all]"
-
-# Or install specific extras
-pip install -e ".[ml]"          # PyTorch, XGBoost, LightGBM, Optuna
-pip install -e ".[broker]"      # MetaTrader5
-pip install -e ".[tui]"         # Textual terminal UI
-pip install -e ".[dev]"         # pytest, pytest-asyncio
 ```
 
-### Running Tests
+---
+
+## 4. Development Commands
+
+### Run tests
 
 ```bash
 pytest tests/ -v
 ```
 
-Expected: **187 tests passing** (144 unit + 42 SENTINEL integration xpassed + 1 expected xfail).
+Current observed result during audit:
+
+- `191` collected
+- `144 passed`
+- `1 xfailed`
+- `46 xpassed`
+
+### Fast test run
+
+```bash
+pytest tests/ -q
+```
+
+### Package install metadata
+
+From `pyproject.toml`:
+
+- Core deps: `numpy`, `pandas`, `polars`, `scipy`, `statsmodels`
+- Optional ML deps: `torch`, `xgboost`, `lightgbm`, `optuna`, `shap`
+- Optional broker dep: `MetaTrader5`
 
 ---
 
-## Technical Details
+## 5. Project Structure
 
-### Event Bus
+```text
+aphelion/
+  core/                 implemented
+  features/             implemented
+  risk/
+    sentinel/           implemented
+    titan/              scaffold only
+  backtest/             implemented
+  intelligence/
+    hydra/              implemented (partial validation)
+    kronos/             scaffold only
+    echo/               scaffold only
+    forge/              scaffold only
+    shadow/             scaffold only
+  evolution/
+    prometheus/         scaffold only
+    cipher/             scaffold only
+    meridian/           scaffold only
+    zeus/               scaffold only
+  flow/
+    phantom/            scaffold only
+    specter/            scaffold only
+  macro/
+    oracle/             scaffold only
+    atlas/              scaffold only
+    nexus/              scaffold only
+    argus/              scaffold only
+    herald/             scaffold only
+  money/                scaffold only
+  ares/                 scaffold only
+  nemesis/
+    pandora/            scaffold only
+    leviathan/          scaffold only
+    chronos/            scaffold only
+    verdict/            scaffold only
+  governance/
+    olympus/            scaffold only
+    council/            scaffold only
+  tui/                  scaffold only
+  aphelion_model/       scaffold only
 
-Async pub/sub messaging with priority dispatch. SENTINEL CRITICAL events are never dropped — if the queue is full they are force-inserted.
-
-| Priority | Value | Used by |
-|----------|-------|---------|
-| CRITICAL | 0 | SENTINEL kill switches, SL breach alerts, L3 disconnect |
-| HIGH | 1 | Circuit breaker L1/L2 alerts, trade signals, position updates |
-| NORMAL | 2 | Bar completions, feature updates |
-| LOW | 3 | Health checks, diagnostics, logging |
-
-### Feature Pipeline
-
-Data processes at two frequencies:
-
-- **Per-tick (< 1ms target):** Microstructure — VPIN, OFI, tick entropy, Hawkes intensity, spread dynamics, quote depth
-- **Per-bar:** Full feature set — market structure, volume profile, VWAP, technical indicators (ATR, Bollinger Bands, RSI, EMA), session features, MTF alignment, cointegration (H1 only for performance)
-
-### Data Layer
-
-- Connects to MetaTrader5 via the Python API; graceful fallback when MT5 is unavailable
-- Aggregates raw ticks into OHLCV bars across 4 timeframes (M1, M5, M15, H1)
-- Validates every tick and bar: rejects negative prices, crossed spreads, spreads > 50 pips, single-tick moves > 5%
-- `load_from_parquet(filepath, timeframe)` and `load_from_csv(filepath, timeframe)` — offline data loading for the Phase 3 backtester; validate required columns, return DataFrames without touching live bar state
-
-### SENTINEL Runtime
-
-All trading activity passes through the SENTINEL enforcement pipeline in sequence:
-
-1. `SentinelCore.is_trading_allowed()` — fast pre-check (L3 / lockout / market hours)
-2. `TradeValidator.validate()` — full 7-rule immutable evaluation
-3. `CircuitBreaker.apply_multiplier()` — scales position size to current drawdown level
-4. `ExecutionEnforcer.approve_order()` — final validation of size-adjusted proposal
-5. `SentinelMonitor` — continuous 100ms background loop watching stop-loss levels for all open positions
+tests/
+  core/
+  features/
+  risk/
+  integration/
+```
 
 ---
 
-## License
+## 6. Architecture Overview
 
-Proprietary. All rights reserved.
+### Tiered governance model (from config)
+
+| Tier | Vote Weight | Role | Examples |
+|---|---:|---|---|
+| Sovereign | inf | System authority | Event bus, clock, registry |
+| Council | 100 | Strategic governance | OLYMPUS, SENTINEL, ARES |
+| Minister | 40 | Intelligence systems | HYDRA, PROMETHEUS, PHANTOM, NEMESIS |
+| Commander | 10 | Execution and strategy modules | BACKTEST, VENOM, REAPER, APEX |
+| Operator | 1 | Support/reporting | FUND |
+
+### Runtime pipeline (implemented path)
+
+```text
+Tick/Bar -> DataLayer -> FeatureEngine -> Strategy -> SENTINEL Validator/Enforcer -> BrokerSim -> Portfolio -> Metrics
+```
+
+---
+
+## 7. Phase-by-Phase Compliance Audit
+
+This section compares the spec phase requirements (from the DOCX roadmap table) against current repository evidence.
+
+### Audit legend
+
+- `DONE`: implemented and validated in-repo
+- `PARTIAL`: implemented in code, but acceptance criteria not yet proven in-repo
+- `NOT STARTED`: package scaffold only or missing
+
+| Phase | Spec Requirement (short) | Repo Evidence | Status |
+|---|---|---|---|
+| 1 | Data Foundation (`DATA`) | `aphelion/core/*`, `aphelion/features/*`, passing tests in `tests/core` + `tests/features` | DONE |
+| 2 | Risk Layer (`SENTINEL`) | `risk/sentinel/core.py`, `validator.py`, `position_sizer.py`, `circuit_breaker.py`, integration tests | DONE |
+| 3 | Backtesting Engine (`BACKTEST`) | `aphelion/backtest/engine.py`, `walk_forward.py`, `monte_carlo.py`, `metrics.py`, `analytics.py` | PARTIAL |
+| 4 | HYDRA v1 (`HYDRA-TFT`) | `intelligence/hydra/tft.py`, `dataset.py`, `trainer.py`, `inference.py`, `strategy.py` | PARTIAL |
+| 5 | Paper Trading | No dedicated paper-trading runtime path in active modules | NOT STARTED |
+| 6 | TUI v1 | `aphelion/tui/` present but no implemented screens/app modules | NOT STARTED |
+| 7 | HYDRA Full Ensemble | `hydra/lstm.py`, `cnn.py`, `moe.py`, `ensemble.py` exist, but no acceptance evidence | PARTIAL |
+| 8 | PROMETHEUS v1 (NEAT) | `aphelion/evolution/prometheus/` scaffold only | NOT STARTED |
+| 9 | Money Makers | `aphelion/money/` scaffold only | NOT STARTED |
+| 10 | ARES Integration | `aphelion/ares/` scaffold only | NOT STARTED |
+| 11 | Full PROMETHEUS | evolution stack scaffold only | NOT STARTED |
+| 12 | Flow Intelligence | `aphelion/flow/*` scaffold only | NOT STARTED |
+| 13 | Macro Intelligence | `aphelion/macro/*` scaffold only | NOT STARTED |
+| 14 | Advanced ML (KRONOS/ECHO/FORGE/SHADOW) | subpackages exist but implementation missing | NOT STARTED |
+| 15 | NEMESIS | `aphelion/nemesis/*` scaffold only | NOT STARTED |
+| 16 | Full System Optimization | OLYMPUS/TITAN/GHOST/CIPHER/MERIDIAN not implemented | NOT STARTED |
+
+### Notes on phase mismatch
+
+- Spec acceptance criteria include performance proofs (for example Sharpe thresholds, OOS window requirements, paper-trading duration). Those proofs are not committed as reproducible artifacts yet.
+- Therefore phases 3/4/7 are marked `PARTIAL` even though substantial code exists.
+
+---
+
+## 8. Module Status Matrix (20-Module Plan)
+
+| Module | Code Status | Test Coverage in Repo |
+|---|---|---|
+| DATA | Implemented | Yes |
+| SENTINEL | Implemented | Yes |
+| BACKTEST | Implemented | Indirect (no dedicated backtest test suite yet) |
+| HYDRA | Implemented (partial validation) | No dedicated HYDRA tests |
+| OLYMPUS | Scaffold | No |
+| ARES | Scaffold | No |
+| PROMETHEUS | Scaffold | No |
+| VENOM | Scaffold | No |
+| REAPER | Scaffold | No |
+| APEX | Scaffold | No |
+| WRAITH | Scaffold | No |
+| KRONOS | Scaffold | No |
+| ECHO | Scaffold | No |
+| FORGE | Scaffold | No |
+| SHADOW | Scaffold | No |
+| PHANTOM | Scaffold | No |
+| SPECTER | Scaffold | No |
+| NEMESIS | Scaffold | No |
+| TITAN | Scaffold | No |
+| GHOST | Scaffold | No |
+
+---
+
+## 9. Implemented Systems
+
+## 9.1 Core Runtime (Phase 1)
+
+Implemented files:
+
+- `aphelion/core/event_bus.py`
+- `aphelion/core/data_layer.py`
+- `aphelion/core/clock.py`
+- `aphelion/core/registry.py`
+- `aphelion/core/config.py`
+
+Implemented features include:
+
+- Async pub/sub event bus with priority handling
+- Tick and bar ingestion/aggregation
+- Market session and lockout logic
+- Component health registry
+- Global system constants and immutable SENTINEL limits
+
+## 9.2 Feature Engine (Phase 1)
+
+Implemented files:
+
+- `features/engine.py`
+- `microstructure.py`
+- `market_structure.py`
+- `volume_profile.py`
+- `vwap.py`
+- `sessions.py`
+- `mtf.py`
+- `cointegration.py`
+
+Outputs include microstructure, profile, session, MTF, and technical context used by both backtest and HYDRA.
+
+## 9.3 Risk System / SENTINEL (Phase 2)
+
+Implemented files:
+
+- `risk/sentinel/core.py`
+- `risk/sentinel/validator.py`
+- `risk/sentinel/position_sizer.py`
+- `risk/sentinel/circuit_breaker.py`
+- `risk/sentinel/execution/enforcer.py`
+- `risk/sentinel/monitor.py`
+
+Highlights:
+
+- Hardcoded limits are immutable (`core/config.py`)
+- Trade proposals validated before execution
+- Drawdown-triggered escalation via circuit breaker
+- Runtime rejection telemetry in enforcer
+
+## 9.4 Backtest Layer (Phase 3)
+
+Implemented files:
+
+- `backtest/engine.py`
+- `backtest/broker_sim.py`
+- `backtest/portfolio.py`
+- `backtest/order.py`
+- `backtest/metrics.py`
+- `backtest/analytics.py`
+- `backtest/monte_carlo.py`
+- `backtest/walk_forward.py`
+
+Capabilities present:
+
+- Event-driven bar simulation
+- Broker simulation with risk validation hooks
+- Position and equity tracking
+- Risk/performance metrics
+- Monte Carlo resampling
+- Walk-forward validation engine
+
+Important caveat vs spec:
+
+- Spec phase 3 explicitly asks for tick-level replay validation against MT5 history. Current engine architecture is primarily bar-driven and does not yet include committed proof artifacts for that acceptance criterion.
+
+---
+
+## 10. HYDRA (Phase 4+) Status
+
+Implemented HYDRA files:
+
+- `intelligence/hydra/tft.py`
+- `intelligence/hydra/lstm.py`
+- `intelligence/hydra/cnn.py`
+- `intelligence/hydra/moe.py`
+- `intelligence/hydra/ensemble.py`
+- `intelligence/hydra/dataset.py`
+- `intelligence/hydra/trainer.py`
+- `intelligence/hydra/inference.py`
+- `intelligence/hydra/strategy.py`
+
+What is already in code:
+
+- TFT model and sequence processing path
+- Additional submodels (LSTM/CNN/MoE)
+- Ensemble gate scaffolding
+- Dataset prep and dataloader helpers
+- Training loop and checkpoint logic
+- Inference and strategy adapter
+
+What is still missing for spec acceptance:
+
+- Reproducible evidence of required OOS Sharpe thresholds
+- Committed validation reports for 2-year OOS and minimum trade count
+- Robust test coverage for HYDRA modules
+- A fully healthy package export surface (`aphelion/intelligence/hydra/__init__.py` currently falls back to empty `__all__` if any import fails)
+
+---
+
+## 11. Testing Status
+
+Current automated test footprint is focused on:
+
+- Core infrastructure
+- Features
+- SENTINEL
+- Integration pipeline
+
+Current observed test summary:
+
+```text
+191 collected
+144 passed
+1 xfailed
+46 xpassed
+```
+
+Current testing gaps:
+
+- No dedicated test suite for `aphelion/backtest/*`
+- No dedicated test suite for `aphelion/intelligence/hydra/*`
+- No tests yet for phases 5+ modules because implementations are mostly absent
+
+---
+
+## 12. Gaps to Reach Full Spec
+
+### Required to close Phase 3 formally
+
+- Add reproducible benchmark for tick-level replay parity with MT5 historical data
+- Add backtest-focused tests (engine, broker sim, portfolio, metrics, walk-forward)
+- Commit acceptance artifacts for walk-forward quality checks
+
+### Required to close Phase 4 formally
+
+- Make `HYDRA` package exports robust (avoid silent empty-export fallback)
+- Add unit/integration tests for HYDRA data, model, trainer, inference, strategy
+- Produce and store reproducible OOS validation artifacts
+- Enforce acceptance gates from spec (`Sharpe > 1.0`, minimum trade count)
+
+### Required for Phases 5-16
+
+- Implement module code in currently scaffold-only packages
+- Add tests and operational glue between modules
+- Add runtime orchestration and deployment pipelines
+
+---
+
+## 13. Suggested Near-Term Build Order
+
+A practical path based on current code maturity:
+
+1. Stabilize Phase 4 package ergonomics and tests (`hydra/__init__.py`, data/model/inference test suite)
+2. Harden Phase 3 acceptance artifacts (backtest and walk-forward reproducibility)
+3. Implement Phase 5 paper trading execution loop
+4. Build minimal Phase 6 TUI screens for live risk/PnL visibility
+5. Start Phase 8 PROMETHEUS v1 (NEAT-only) after Phases 3-6 are acceptance-validated
+
+---
+
+## 14. Contribution Workflow
+
+### Branching and commits
+
+- Use focused branches (`feature/<name>`, `fix/<name>`)
+- Keep each commit scoped to one concern
+- Include tests with behavior changes
+
+### Before opening a PR
+
+Run:
+
+```bash
+pytest tests/ -v
+```
+
+Include in PR description:
+
+- What changed
+- Why it changed
+- How it was validated
+- Any risk or migration notes
+
+### Coding conventions
+
+- Python 3.11+
+- Prefer type hints
+- Keep module boundaries clean
+- Do not bypass SENTINEL risk constraints in any execution path
+
+---
+
+## 15. License and Confidentiality
+
+This project is marked confidential/proprietary in the engineering spec. Treat strategy logic, model architecture, and risk logic as sensitive intellectual property.
+
+---
+
+## Appendix A: Phase Requirements Snapshot (from DOCX)
+
+From the engineering roadmap section of the DOCX spec:
+
+- Phase 1: Data Foundation, DATA module, features + tests
+- Phase 2: Risk Layer, SENTINEL core rules and kill switches
+- Phase 3: Backtesting engine with walk-forward validation
+- Phase 4: HYDRA v1 (TFT-only acceptance criteria)
+- Phase 5+: progressive integration through paper trading, TUI, full ensemble, evolution engine, macro/flow intelligence, NEMESIS, and full optimization
+
+This README intentionally tracks the **actual repository state** against those requirements.
+
+---
+
+## Appendix B: Directory Completeness Snapshot
+
+Non-`__init__.py` Python file counts observed during audit:
+
+```text
+core: 5
+features: 8
+risk/sentinel: 6
+backtest: 8
+intelligence/hydra: 9
+intelligence/kronos: 0
+intelligence/echo: 0
+intelligence/forge: 0
+intelligence/shadow: 0
+evolution/prometheus: 0
+evolution/cipher: 0
+evolution/meridian: 0
+evolution/zeus: 0
+money: 0
+ares: 0
+flow/phantom: 0
+flow/specter: 0
+macro/oracle: 0
+macro/atlas: 0
+macro/nexus: 0
+macro/argus: 0
+macro/herald: 0
+nemesis/pandora: 0
+nemesis/leviathan: 0
+nemesis/chronos: 0
+nemesis/verdict: 0
+governance/olympus: 0
+governance/council: 0
+risk/titan: 0
+tui: 0
+```
+
+This snapshot is the main reason phases 5-16 are currently marked not started.
+

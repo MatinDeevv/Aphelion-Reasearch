@@ -21,6 +21,10 @@ class TradeProposal:
     proposed_by: str
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
+    def with_size(self, new_size_pct: float) -> "TradeProposal":
+        from dataclasses import replace
+        return replace(self, size_pct=new_size_pct)
+
 
 @dataclass
 class ValidationResult:
