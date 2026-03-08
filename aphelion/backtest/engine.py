@@ -21,6 +21,7 @@ from aphelion.backtest.order import (
 from aphelion.backtest.portfolio import Portfolio
 from aphelion.core.config import Timeframe
 from aphelion.core.data_layer import Bar, DataLayer
+from aphelion.core.clock import MarketClock
 from aphelion.features.engine import FeatureEngine
 from aphelion.risk.sentinel.circuit_breaker import CircuitBreaker
 from aphelion.risk.sentinel.core import SentinelCore
@@ -90,6 +91,7 @@ class BacktestEngine:
         self._cb: CircuitBreaker = sentinel_stack["cb"]
         self._enforcer: ExecutionEnforcer = sentinel_stack["enforcer"]
         self._sizer: PositionSizer = sentinel_stack["sizer"]
+        self._clock: MarketClock = sentinel_stack["clock"]  # FIXED: store clock for simulated time
         self._data_layer = data_layer
 
         self._strategy_callback: Optional[Callable] = None
@@ -119,6 +121,11 @@ class BacktestEngine:
         for i, bar in enumerate(bars):
             self._bar_index = i
             self._broker.set_bar_index(i)
+
+            # FIXED: Set simulated time so MarketClock uses bar timestamp
+            bar_ts = bar.timestamp if isinstance(bar.timestamp, datetime) else None
+            if bar_ts is not None:
+                self._clock.set_simulated_time(bar_ts)
 
             # 1. Update sentinel equity
             self._sentinel_core.update_equity(self._portfolio.equity)
@@ -189,6 +196,7 @@ class BacktestEngine:
                         for order in new_orders:
                             order = self._apply_execution_enforcement(order, bar)
                             if order is None:
+                                self._enforcer_rejections += 1  # FIXED: track enforcer rejections
                                 continue
 
                             if order.order_type == OrderType.MARKET:
@@ -206,8 +214,14 @@ class BacktestEngine:
             self._portfolio.update_bar(bar, i)
 
         # Build results
+        # FIXED: Reset simulated time after run completes
+        self._clock.set_simulated_time(None)
+
         eq_ts, eq_vals = self._portfolio.get_equity_series()
         dd_ts, dd_vals = self._portfolio.get_drawdown_series()
+
+        # FIXED: Count both enforcer-level and broker-level rejections
+        total_rejections = self._broker.stats["rejection_count"] + self._enforcer_rejections
 
         self._results = BacktestResults(
             config=self._config,
@@ -217,7 +231,7 @@ class BacktestEngine:
             total_bars=total_bars,
             warmup_bars=self._config.warmup_bars,
             broker_stats=self._broker.stats,
-            sentinel_rejections=self._broker.stats["rejection_count"],
+            sentinel_rejections=total_rejections,
             final_equity=self._portfolio.equity,
             initial_capital=self._config.initial_capital,
             daily_returns=self._portfolio.get_daily_returns(),
@@ -239,6 +253,7 @@ class BacktestEngine:
         self._portfolio = Portfolio(self._config.initial_capital)
         self._pending_orders = []
         self._bar_index = 0
+        self._enforcer_rejections = 0  # FIXED: track enforcer-level rejections
         self._results = None
         if self._config.enable_feature_engine:
             self._feature_engine = FeatureEngine(self._data_layer)

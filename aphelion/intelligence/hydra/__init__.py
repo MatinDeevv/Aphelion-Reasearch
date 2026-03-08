@@ -26,6 +26,10 @@ try:
         InferenceConfig,
         HydraSignal,
     )
+    from aphelion.intelligence.hydra.strategy import (
+        HydraStrategy,
+        StrategyConfig,
+    )
 
     HAS_TORCH = True
 

@@ -4,27 +4,52 @@ Autonomous XAU/USD trading system with strict risk governance, engineered featur
 
 > Last repository audit: **2026-03-08 (America/Toronto)**
 > 
-> Spec reference: `C:\Users\marti\Aphelion\APHELION_Engineering_Spec_v1.docx`
+> Spec reference: `docs/specs/APHELION_Engineering_Spec_v1.docx`
 
 ---
 
 ## Table of Contents
 
-- [1. What This Repository Is](#1-what-this-repository-is)
-- [2. Current Reality vs Engineering Spec](#2-current-reality-vs-engineering-spec)
-- [3. Quick Start](#3-quick-start)
-- [4. Development Commands](#4-development-commands)
-- [5. Project Structure](#5-project-structure)
-- [6. Architecture Overview](#6-architecture-overview)
-- [7. Phase-by-Phase Compliance Audit](#7-phase-by-phase-compliance-audit)
-- [8. Module Status Matrix (20-Module Plan)](#8-module-status-matrix-20-module-plan)
-- [9. Implemented Systems](#9-implemented-systems)
-- [10. HYDRA (Phase 4+) Status](#10-hydra-phase-4-status)
-- [11. Testing Status](#11-testing-status)
-- [12. Gaps to Reach Full Spec](#12-gaps-to-reach-full-spec)
-- [13. Suggested Near-Term Build Order](#13-suggested-near-term-build-order)
-- [14. Contribution Workflow](#14-contribution-workflow)
-- [15. License and Confidentiality](#15-license-and-confidentiality)
+- [APHELION](#aphelion)
+  - [Table of Contents](#table-of-contents)
+  - [1. What This Repository Is](#1-what-this-repository-is)
+  - [2. Current Reality vs Engineering Spec](#2-current-reality-vs-engineering-spec)
+    - [High-level status summary](#high-level-status-summary)
+    - [Important README correction](#important-readme-correction)
+  - [3. Quick Start](#3-quick-start)
+    - [Prerequisites](#prerequisites)
+    - [Install](#install)
+  - [4. Development Commands](#4-development-commands)
+    - [Run tests](#run-tests)
+    - [Fast test run](#fast-test-run)
+    - [Package install metadata](#package-install-metadata)
+  - [5. Project Structure](#5-project-structure)
+  - [6. Architecture Overview](#6-architecture-overview)
+    - [Tiered governance model (from config)](#tiered-governance-model-from-config)
+    - [Runtime pipeline (implemented path)](#runtime-pipeline-implemented-path)
+  - [7. Phase-by-Phase Compliance Audit](#7-phase-by-phase-compliance-audit)
+    - [Audit legend](#audit-legend)
+    - [Notes on phase mismatch](#notes-on-phase-mismatch)
+  - [8. Module Status Matrix (20-Module Plan)](#8-module-status-matrix-20-module-plan)
+  - [9. Implemented Systems](#9-implemented-systems)
+  - [9.1 Core Runtime (Phase 1)](#91-core-runtime-phase-1)
+  - [9.2 Feature Engine (Phase 1)](#92-feature-engine-phase-1)
+  - [9.3 Risk System / SENTINEL (Phase 2)](#93-risk-system--sentinel-phase-2)
+  - [9.4 Backtest Layer (Phase 3)](#94-backtest-layer-phase-3)
+  - [10. HYDRA (Phase 4+) Status](#10-hydra-phase-4-status)
+  - [11. Testing Status](#11-testing-status)
+  - [12. Gaps to Reach Full Spec](#12-gaps-to-reach-full-spec)
+    - [Required to close Phase 3 formally](#required-to-close-phase-3-formally)
+    - [Required to close Phase 4 formally](#required-to-close-phase-4-formally)
+    - [Required for Phases 5-16](#required-for-phases-5-16)
+  - [13. Suggested Near-Term Build Order](#13-suggested-near-term-build-order)
+  - [14. Contribution Workflow](#14-contribution-workflow)
+    - [Branching and commits](#branching-and-commits)
+    - [Before opening a PR](#before-opening-a-pr)
+    - [Coding conventions](#coding-conventions)
+  - [15. License and Confidentiality](#15-license-and-confidentiality)
+  - [Appendix A: Phase Requirements Snapshot (from DOCX)](#appendix-a-phase-requirements-snapshot-from-docx)
+  - [Appendix B: Directory Completeness Snapshot](#appendix-b-directory-completeness-snapshot)
 
 ---
 
@@ -45,7 +70,7 @@ This repository currently contains:
 
 ## 2. Current Reality vs Engineering Spec
 
-The engineering spec (`APHELION_Engineering_Spec_v1.docx`) is a **target architecture** and roadmap. The repository is currently a **partial implementation** of that roadmap.
+The engineering spec (`docs/specs/APHELION_Engineering_Spec_v1.docx`) is a **target architecture** and roadmap. The repository is currently a **partial implementation** of that roadmap.
 
 ### High-level status summary
 
@@ -125,6 +150,8 @@ From `pyproject.toml`:
 ---
 
 ## 5. Project Structure
+
+For a quick top-level navigation map, see `docs/REPOSITORY_STRUCTURE.md`.
 
 ```text
 aphelion/

@@ -33,7 +33,7 @@ def sharpe_ratio(
     excess = arr - daily_rf
     mean_excess = float(np.mean(excess))
     std = float(np.std(excess, ddof=1))
-    if std == 0:
+    if std < 1e-10:  # FIXED: floating-point epsilon guard
         return 0.0
     return mean_excess / std * math.sqrt(trading_days)
 

@@ -122,12 +122,6 @@ async def test_set_external_prices():
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason=(
-        "FeatureEngine.reset_session calls VWAPCalculator.reset_session, but "
-        "VWAPCalculator does not clear exposed VWAPState.session_vwap to 0.0."
-    )
-)
 async def test_session_reset():
     data_layer, completed_bars = await make_data_layer()
     fe = FeatureEngine(data_layer)

@@ -382,6 +382,7 @@ class WalkForwardEngine:
                 "cb": cb,
                 "enforcer": enforcer,
                 "sizer": sizer,
+                "clock": clock,  # FIXED: BacktestEngine expects clock
             }
         except Exception:
             # Fallback to provided stack if an external sentinel implementation differs.

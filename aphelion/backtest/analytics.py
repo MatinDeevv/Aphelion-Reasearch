@@ -189,7 +189,7 @@ class PerformanceAnalyzer:
         rf_daily = self._risk_free_rate / 252.0
         excess = np.array([ret - rf_daily for ret in returns], dtype=float)
         std = float(np.std(excess))
-        if std == 0.0:
+        if std < 1e-10:  # FIXED: floating-point epsilon guard
             return 0.0
         return float(sqrt(252.0) * float(np.mean(excess)) / std)
 
@@ -203,7 +203,7 @@ class PerformanceAnalyzer:
         excess = np.array([ret - rf_daily for ret in returns], dtype=float)
         downside = np.array([ret for ret in returns if ret < 0], dtype=float)
         downside_std = float(np.std(downside)) if len(downside) > 0 else 0.0
-        if downside_std == 0.0:
+        if downside_std < 1e-10:  # FIXED: floating-point epsilon guard
             return 0.0
         return float(sqrt(252.0) * float(np.mean(excess)) / downside_std)
 

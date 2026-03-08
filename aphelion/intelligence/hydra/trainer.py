@@ -11,6 +11,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+from contextlib import nullcontext
 
 import numpy as np
 
@@ -18,7 +19,6 @@ try:
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
-    from torch.cuda.amp import GradScaler, autocast
     HAS_TORCH = True
 except ImportError:
     HAS_TORCH = False
@@ -129,7 +129,8 @@ if HAS_TORCH:
 
             self._focal = FocalLoss(cfg.focal_gamma, cfg.focal_alpha)
             self._quantile = QuantileLoss(cfg.ensemble_config.tft_config.quantile_targets)
-            self._scaler = GradScaler(enabled=cfg.use_amp)
+            amp_enabled = cfg.use_amp and self._device.type == "cuda"
+            self._scaler = self._create_grad_scaler(enabled=amp_enabled)
 
             self._best_val_sharpe = -float("inf")
             self._best_val_loss = float("inf")
@@ -142,6 +143,22 @@ if HAS_TORCH:
         @property
         def model(self) -> HydraGate:
             return self._model
+
+        @staticmethod
+        def _create_grad_scaler(enabled: bool):
+            try:
+                return torch.amp.GradScaler("cuda", enabled=enabled)
+            except (AttributeError, TypeError):
+                return torch.cuda.amp.GradScaler(enabled=enabled)
+
+        def _autocast_context(self):
+            if not self._config.use_amp or self._device.type != "cuda":
+                return nullcontext()
+
+            try:
+                return torch.amp.autocast("cuda", enabled=True)
+            except (AttributeError, TypeError):
+                return torch.cuda.amp.autocast(enabled=True)
 
         def train(self, train_loader, val_loader) -> dict:
             cfg = self._config
@@ -213,7 +230,7 @@ if HAS_TORCH:
 
                 self._optimizer.zero_grad(set_to_none=True)
 
-                with autocast(enabled=cfg.use_amp):
+                with self._autocast_context():
                     outputs = self._model(cont, cat)
 
                     # 1. Main Ensemble Classification Loss (Focal)
@@ -276,7 +293,7 @@ if HAS_TORCH:
             for batch in loader:
                 cont, cat, y5m, y15m, y1h, raw_ret = [b.to(self._device) for b in batch]
 
-                with autocast(enabled=cfg.use_amp):
+                with self._autocast_context():
                     outputs = self._model(cont, cat)
 
                     loss_cls = (

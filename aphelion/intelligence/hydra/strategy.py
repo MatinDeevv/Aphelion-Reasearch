@@ -15,8 +15,7 @@ from aphelion.backtest.order import Order, OrderType, OrderSide, OrderStatus
 from aphelion.backtest.portfolio import Portfolio
 from aphelion.core.config import SENTINEL
 from aphelion.core.data_layer import Bar
-from aphelion.intelligence.hydra.inference import HydraInference, InferenceConfig
-from aphelion.intelligence.hydra.tft import HydraSignal
+from aphelion.intelligence.hydra.inference import HydraInference, HydraSignal
 
 try:
     import numpy as np
@@ -74,7 +73,7 @@ class HydraStrategy:
         self._bars_since_trade += 1
 
         # Run HYDRA inference
-        signal = self._inference.update_bar(features, bar.close)
+        signal = self._inference.process_bar(features)
 
         if signal is None:
             return []
@@ -115,14 +114,16 @@ class HydraStrategy:
         sl_distance = atr * self._config.atr_sl_multiplier
         tp_distance = sl_distance * self._config.rr_ratio
 
-        if signal.direction == "LONG":
+        if signal.direction == 1:
             side = OrderSide.BUY
             stop_loss = bar.close - sl_distance
             take_profit = bar.close + tp_distance
-        elif signal.direction == "SHORT":
+        elif signal.direction == -1:
             side = OrderSide.SELL
             stop_loss = bar.close + sl_distance
             take_profit = bar.close - tp_distance
+        elif signal.direction == 0:
+            return []
         else:
             return []
 

@@ -126,16 +126,10 @@ class MonteCarloEngine:
         n_trades = len(trades)
         n_paths = self._config.num_paths
 
-        if n_trades == 0:
-            return MonteCarloResults(
-                num_paths=n_paths,
-                num_trades=0,
-                initial_capital=initial_capital,
-                p5_final=initial_capital,
-                p50_final=initial_capital,
-                p95_final=initial_capital,
-                mean_final=initial_capital,
-            )
+        if n_trades < 10:
+            raise ValueError(
+                f"MonteCarloEngine requires at least 10 trades, got {n_trades}"
+            )  # FIXED: Added ValueError for < 10 trades as required by spec
 
         pnls = np.array([trade.net_pnl for trade in trades], dtype=np.float64)
         all_equity = np.zeros((n_paths, n_trades + 1), dtype=np.float64)

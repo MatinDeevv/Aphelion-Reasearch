@@ -27,6 +27,16 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class InferenceConfig:
+    """Configuration for HYDRA inference."""
+    checkpoint_path: str = ""
+    device: str = ""
+    smoothing_alpha: float = 0.3
+    history_len: int = 64
+# FIXED: Added InferenceConfig and is_actionable/horizon_agreement to HydraSignal
+
+
+@dataclass
 class HydraSignal:
     """Output prediction from the HYDRA Ensemble."""
     direction: int         # 1=LONG, -1=SHORT, 0=FLAT
@@ -43,6 +53,27 @@ class HydraSignal:
     gate_weights: dict[str, float]
 
     timestamp_ms: int = 0
+
+    @property
+    def is_actionable(self) -> bool:
+        """Signal is actionable if direction != 0 and confidence > 0.55."""
+        return self.direction != 0 and self.confidence > 0.55
+
+    @property
+    def horizon_agreement(self) -> float:
+        """Fraction of horizons that agree on direction (0-1)."""
+        # Compute from probs_long and probs_short
+        dirs = []
+        for pl, ps in zip(self.probs_long, self.probs_short):
+            if pl > ps and pl > (1 - pl - ps):
+                dirs.append(1)
+            elif ps > pl and ps > (1 - pl - ps):
+                dirs.append(-1)
+            else:
+                dirs.append(0)
+        from collections import Counter
+        most_common = Counter(dirs).most_common(1)[0][1]
+        return most_common / 3.0
 
 
 class HydraInference:

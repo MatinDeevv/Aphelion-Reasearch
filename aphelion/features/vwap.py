@@ -87,6 +87,12 @@ class VWAPCalculator:
         self._session_cum_tp_vol = 0.0
         self._session_cum_vol = 0.0
         self._session_cum_tp2_vol = 0.0
+        self._state.session_vwap = 0.0
+        self._state.upper_band_1 = 0.0
+        self._state.lower_band_1 = 0.0
+        self._state.upper_band_2 = 0.0
+        self._state.lower_band_2 = 0.0
+        self._state.price_vs_vwap = 0.0
 
     def set_anchor(self) -> None:
         """Set anchor point for anchored VWAP (e.g., at last swing)."""

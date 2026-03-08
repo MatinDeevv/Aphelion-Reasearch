@@ -20,9 +20,16 @@ class MarketClock:
         self._news_calendar: list[dict] = []
         self._market_close_friday_utc = (21, 0)  # Friday 21:00 UTC
         self._market_open_sunday_utc = (22, 0)    # Sunday 22:00 UTC
+        self._simulated_time: Optional[datetime] = None  # FIXED: backtest clock override
 
-    @staticmethod
-    def now_utc() -> datetime:
+    def set_simulated_time(self, dt: Optional[datetime]) -> None:
+        """Override now_utc() for deterministic backtesting."""
+        self._simulated_time = dt
+
+    def now_utc(self) -> datetime:
+        # FIXED: Use simulated time when set (backtest mode)
+        if self._simulated_time is not None:
+            return self._simulated_time
         return datetime.now(timezone.utc)
 
     def current_session(self, dt: Optional[datetime] = None) -> Session:
