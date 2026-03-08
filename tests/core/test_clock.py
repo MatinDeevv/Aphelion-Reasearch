@@ -122,7 +122,7 @@ class TestSessionFeatures:
             "minutes_to_session_close", "day_of_week", "week_of_month",
             "minutes_to_next_news", "last_news_minutes_ago",
             "is_month_end", "is_quarter_end", "is_friday_lockout",
-            "is_news_lockout", "market_open",
+            "is_news_lockout", "market_open", "is_trading_session",
         }
         assert set(features.keys()) == expected_keys
 

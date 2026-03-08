@@ -72,7 +72,7 @@ class TestModules:
         expected = {
             "OLYMPUS", "SENTINEL", "ARES", "HYDRA", "PROMETHEUS",
             "PHANTOM", "NEMESIS", "FORGE", "ATLAS", "DATA",
-            "VENOM", "REAPER", "APEX", "WRAITH", "SHADOW",
+            "BACKTEST", "VENOM", "REAPER", "APEX", "WRAITH", "SHADOW",
             "KRONOS", "ECHO", "CASSANDRA", "ORACLE", "TITAN",
             "GHOST", "FUND",
         }

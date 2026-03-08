@@ -291,6 +291,25 @@ class DataLayer:
         df.rename(columns={"time": "timestamp", "real_volume": "volume"}, inplace=True)
         return df
 
+    def load_from_parquet(self, filepath: str, timeframe: Timeframe) -> pd.DataFrame:
+        """Load bar data from a Parquet file. Returns DataFrame (does not populate self._bars)."""
+        required = {"timestamp", "open", "high", "low", "close", "volume", "tick_volume", "spread"}
+        df = pd.read_parquet(filepath)
+        missing = required - set(df.columns)
+        if missing:
+            raise ValueError(f"Missing required columns: {missing}")
+        return df
+
+    def load_from_csv(self, filepath: str, timeframe: Timeframe) -> pd.DataFrame:
+        """Load bar data from a CSV file. Returns DataFrame (does not populate self._bars)."""
+        required = {"timestamp", "open", "high", "low", "close", "volume", "tick_volume", "spread"}
+        df = pd.read_csv(filepath)
+        missing = required - set(df.columns)
+        if missing:
+            raise ValueError(f"Missing required columns: {missing}")
+        df["timestamp"] = pd.to_datetime(df["timestamp"], utc=True)
+        return df
+
     @property
     def is_connected(self) -> bool:
         return self._connected

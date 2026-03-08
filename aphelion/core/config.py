@@ -153,6 +153,7 @@ MODULES: Final = {
     "DATA":       ModuleInfo("DATA", Tier.MINISTER, "Data Layer & Features"),
 
     # Tier 4 — Commanders
+    "BACKTEST":   ModuleInfo("BACKTEST", Tier.COMMANDER, "Backtesting Engine & Monte Carlo"),
     "VENOM":      ModuleInfo("VENOM", Tier.COMMANDER, "Statistical Arbitrage"),
     "REAPER":     ModuleInfo("REAPER", Tier.COMMANDER, "Liquidity Vacuum"),
     "APEX":       ModuleInfo("APEX", Tier.COMMANDER, "Volatility Breakout"),

@@ -173,4 +173,5 @@ class MarketClock:
             "is_friday_lockout": self.is_friday_lockout(dt),
             "is_news_lockout": self.is_news_lockout(dt),
             "market_open": self.is_market_open(dt),
+            "is_trading_session": self.is_trading_session(dt),
         }

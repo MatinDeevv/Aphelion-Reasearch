@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from dataclasses import dataclass
 from typing import Optional
+from statsmodels.tsa.stattools import adfuller
 
 
 @dataclass
@@ -46,45 +47,19 @@ class CointegrationEngine:
 
     def _adf_test_simple(self, series: np.ndarray) -> float:
         """
-        Simplified ADF test. Returns approximate p-value.
-        For production, use statsmodels.tsa.stattools.adfuller.
+        ADF test using statsmodels. Returns p-value.
         """
         if len(series) < 10:
             return 1.0
 
-        # Compute ADF statistic
-        diff = np.diff(series)
-        lagged = series[:-1]
-
-        if np.std(lagged) == 0:
+        if np.std(series) == 0:
             return 1.0
 
-        # OLS: diff = alpha + beta * lagged + error
-        x = np.column_stack([np.ones(len(lagged)), lagged])
         try:
-            beta = np.linalg.lstsq(x, diff, rcond=None)[0]
-        except np.linalg.LinAlgError:
+            result = adfuller(series)
+            return result[1]  # p-value
+        except Exception:
             return 1.0
-
-        residuals = diff - x @ beta
-        se = np.sqrt(np.sum(residuals ** 2) / (len(residuals) - 2))
-        se_beta = se / np.sqrt(np.sum((lagged - np.mean(lagged)) ** 2))
-
-        if se_beta == 0:
-            return 1.0
-
-        t_stat = beta[1] / se_beta
-
-        # Approximate p-value from ADF critical values
-        # MacKinnon critical values for n=100: 1%=-3.51, 5%=-2.89, 10%=-2.58
-        if t_stat < -3.51:
-            return 0.01
-        elif t_stat < -2.89:
-            return 0.05
-        elif t_stat < -2.58:
-            return 0.10
-        else:
-            return 0.50
 
     def _half_life(self, spread: np.ndarray) -> float:
         """Estimate mean-reversion half-life via OLS on lagged spread."""
