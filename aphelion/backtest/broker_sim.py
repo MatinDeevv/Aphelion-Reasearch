@@ -274,11 +274,12 @@ class BrokerSimulator:
             if pos.direction == "LONG":
                 # Gap check — open already past SL
                 if current_bar.open < pos.stop_loss:
+                    # Gap-through: use open price (no additional slippage, gap IS the slippage)
                     exit_price = current_bar.open
                     exit_reason = "SL_HIT"
                 elif current_bar.low <= pos.stop_loss:
-                    # SL hit within bar — apply slippage
-                    raw_slip = self._rng.exponential(cfg.slippage_pips) * cfg.gap_slippage_multiplier
+                    # Normal SL hit within bar — apply standard slippage (NO gap multiplier)
+                    raw_slip = self._rng.exponential(cfg.slippage_pips)
                     sl_slip = min(raw_slip, cfg.max_slippage_pips)
                     exit_price = pos.stop_loss - sl_slip * cfg.pip_size
                     exit_reason = "SL_HIT"
@@ -292,7 +293,8 @@ class BrokerSimulator:
                     exit_price = current_bar.open
                     exit_reason = "SL_HIT"
                 elif current_bar.high >= pos.stop_loss:
-                    raw_slip = self._rng.exponential(cfg.slippage_pips) * cfg.gap_slippage_multiplier
+                    # Normal SL hit — standard slippage only
+                    raw_slip = self._rng.exponential(cfg.slippage_pips)
                     sl_slip = min(raw_slip, cfg.max_slippage_pips)
                     exit_price = pos.stop_loss + sl_slip * cfg.pip_size
                     exit_reason = "SL_HIT"

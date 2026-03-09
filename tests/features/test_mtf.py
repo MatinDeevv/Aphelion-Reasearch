@@ -2,16 +2,16 @@
 
 import numpy as np
 import pandas as pd
-from aphelion.core.config import Timeframe
+from aphelion.core.config import Timeframe, TIMEFRAMES
 from aphelion.features.mtf import MTFAlignmentEngine
 
 
 class TestMTFAlignment:
     def test_all_aligned_long(self):
         engine = MTFAlignmentEngine()
-        for tf in Timeframe:
+        for tf in TIMEFRAMES:
             engine.update_signal(tf, "LONG")
-        assert engine.alignment_count("LONG") == 4
+        assert engine.alignment_count("LONG") == len(TIMEFRAMES)
 
     def test_mixed_signals(self):
         engine = MTFAlignmentEngine()
@@ -37,7 +37,7 @@ class TestMTFAlignment:
 
         # Create uptrending data
         bars = {}
-        for tf in Timeframe:
+        for tf in TIMEFRAMES:
             n = 30
             closes = np.linspace(2840, 2860, n)
             bars[tf] = pd.DataFrame({
@@ -49,7 +49,7 @@ class TestMTFAlignment:
 
         result = engine.compute(bars)
         assert result["mtf_dominant_direction"] == "LONG"
-        assert result["mtf_alignment_count"] == 4
+        assert result["mtf_alignment_count"] == len(TIMEFRAMES)
 
     def test_compute_trend_flat(self):
         engine = MTFAlignmentEngine()

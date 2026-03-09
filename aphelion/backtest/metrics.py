@@ -63,10 +63,10 @@ def deflated_sharpe_ratio(
     )
     n = backtest_length_days
     # Standard error of Sharpe estimator adjusted for skew/kurtosis
-    se = math.sqrt(
-        (1 - skewness * observed_sharpe + (kurtosis - 1) / 4 * observed_sharpe ** 2)
-        / (n - 1)
+    se_inner = (
+        1 - skewness * observed_sharpe + (kurtosis - 1) / 4 * observed_sharpe ** 2
     )
+    se = math.sqrt(max(se_inner, 1e-10) / (n - 1))  # Guard against negative under-root
     if se == 0:
         return 0.0
     t_stat = (observed_sharpe - e_max_sr) / se
@@ -87,7 +87,7 @@ def sortino_ratio(
     mean_excess = float(np.mean(excess))
     downside = excess[excess < 0]
     if len(downside) == 0:
-        return float("inf") if mean_excess > 0 else 0.0
+        return min(10.0, mean_excess * math.sqrt(trading_days)) if mean_excess > 0 else 0.0  # Cap instead of inf
     downside_std = float(np.std(downside, ddof=1))
     if downside_std == 0:
         return 0.0

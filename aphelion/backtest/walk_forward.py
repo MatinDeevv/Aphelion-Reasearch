@@ -258,10 +258,12 @@ class WalkForwardEngine:
         window_idx = 0
         start = 0
 
-        while start + cfg.train_bars + cfg.test_bars <= total:
+        while start + cfg.train_bars + cfg.backtest_config.warmup_bars + cfg.test_bars <= total:
             train_start = start
             train_end = start + cfg.train_bars
-            test_start = train_end
+            # Embargo: skip warmup_bars between train/test to prevent look-ahead bias
+            embargo = cfg.backtest_config.warmup_bars
+            test_start = train_end + embargo
             test_end = min(test_start + cfg.test_bars, total)
 
             train_slice = bars[train_start:train_end]
@@ -284,6 +286,19 @@ class WalkForwardEngine:
                 broker_config=cfg.backtest_config.broker_config,
                 max_bars=None,
                 warmup_bars=min(cfg.backtest_config.warmup_bars, len(test_slice) // 10),
+                random_seed=cfg.backtest_config.random_seed + window_idx,
+                enable_feature_engine=cfg.backtest_config.enable_feature_engine,
+            )
+
+            # Separate train config with appropriately sized warmup
+            train_bt_config = BacktestConfig(
+                symbol=cfg.backtest_config.symbol,
+                timeframe=cfg.backtest_config.timeframe,
+                initial_capital=cfg.backtest_config.initial_capital,
+                risk_per_trade=cfg.backtest_config.risk_per_trade,
+                broker_config=cfg.backtest_config.broker_config,
+                max_bars=None,
+                warmup_bars=min(cfg.backtest_config.warmup_bars, len(train_slice) // 10),
                 random_seed=cfg.backtest_config.random_seed + window_idx,
                 enable_feature_engine=cfg.backtest_config.enable_feature_engine,
             )
@@ -313,7 +328,7 @@ class WalkForwardEngine:
 
             # Also run backtest on train data for comparison
             train_sentinel_stack = self._fresh_sentinel_stack()
-            train_engine = BacktestEngine(bt_config, train_sentinel_stack, self._data_layer)
+            train_engine = BacktestEngine(train_bt_config, train_sentinel_stack, self._data_layer)
             train_strategy = self._strategy_factory(train_slice)
             train_engine.set_strategy(train_strategy)
             train_results = train_engine.run(train_slice)
@@ -322,7 +337,7 @@ class WalkForwardEngine:
                 trades=train_results.trades,
                 equity_curve=train_results.equity_curve[1],
                 daily_returns=train_results.daily_returns,
-                initial_capital=bt_config.initial_capital,
+                initial_capital=train_bt_config.initial_capital,
                 total_bars=len(train_slice),
             )
 
@@ -473,9 +488,11 @@ class WalkForwardEngine:
                 "sizer": sizer,
                 "clock": clock,  # FIXED: BacktestEngine expects clock
             }
-        except Exception:
-            # Fallback to provided stack if an external sentinel implementation differs.
-            return self._sentinel_stack
+        except Exception as exc:
+            # NEVER fall back to shared stack — it would break window isolation
+            raise RuntimeError(
+                f"Failed to create isolated SENTINEL stack for WF window: {exc}"
+            ) from exc
 
     @staticmethod
     def _build_combined_equity(

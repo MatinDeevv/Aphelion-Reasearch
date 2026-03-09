@@ -17,7 +17,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-from aphelion.core.config import Timeframe, SYMBOL, EventTopic
+from aphelion.core.config import Timeframe, TIMEFRAMES, SYMBOL, EventTopic
 from aphelion.core.event_bus import EventBus, Event, Priority
 
 
@@ -74,6 +74,8 @@ class BarAggregator:
         Timeframe.M5: 300,
         Timeframe.M15: 900,
         Timeframe.H1: 3600,
+        Timeframe.D1: 86400,
+        Timeframe.W1: 604800,
     }
 
     def __init__(self, timeframe: Timeframe):
@@ -230,10 +232,10 @@ class DataLayer:
             max_price_jump_pct=max_price_jump_pct,
             max_gap_seconds=max_gap_seconds,
         )
-        self._aggregators = {tf: BarAggregator(tf) for tf in Timeframe}
+        self._aggregators = {tf: BarAggregator(tf) for tf in TIMEFRAMES}
         self._tick_buffer: deque[Tick] = deque(maxlen=50_000)
         self._bars: dict[Timeframe, deque[Bar]] = {
-            tf: deque(maxlen=10_000) for tf in Timeframe
+            tf: deque(maxlen=10_000) for tf in TIMEFRAMES
         }
         self._connected = False
         self._tick_count = 0

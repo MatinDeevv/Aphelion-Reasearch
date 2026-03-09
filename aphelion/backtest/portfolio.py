@@ -144,7 +144,7 @@ class Portfolio:
             dd = (self._peak_equity - self._equity) / self._peak_equity
         self._drawdown_curve.append(dd)
 
-        ts = bar.timestamp if isinstance(bar.timestamp, datetime) else datetime.now(tz=None)
+        ts = bar.timestamp if isinstance(bar.timestamp, datetime) else datetime.now(tz=timezone.utc)
         self._bar_timestamps.append(ts)
 
         date_str = ts.strftime("%Y-%m-%d") if isinstance(ts, datetime) else str(ts)

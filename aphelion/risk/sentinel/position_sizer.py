@@ -18,10 +18,19 @@ class PositionSizer:
         pass
 
     def kelly_fraction(self, win_rate: float, avg_win: float, avg_loss: float) -> float:
+        """Quarter-Kelly using the correct formula normalized to R-multiples.
+        Kelly: f* = p - q/(b/a) where p=win_rate, q=1-p, b=avg_win, a=avg_loss.
+        This is equivalent to f* = (p*b - q*a) / (a*b) but normalized so it's
+        scale-invariant (same result for $200/$100 as $2000/$1000 at same ratio).
+        """
         if avg_win <= 0 or avg_loss <= 0:
             return 0.0
 
-        full_kelly = (win_rate / avg_loss) - ((1.0 - win_rate) / avg_win)
+        # b/a = win/loss ratio (R-multiple)
+        win_loss_ratio = avg_win / avg_loss
+        q = 1.0 - win_rate
+        # Kelly: f* = p - q / (b/a)
+        full_kelly = win_rate - (q / win_loss_ratio) if win_loss_ratio > 0 else 0.0
         full_kelly = max(0.0, min(1.0, full_kelly))
         sized = full_kelly * KELLY_FRACTION
         return min(sized, KELLY_MAX_F)

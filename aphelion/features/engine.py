@@ -112,6 +112,29 @@ class FeatureEngine:
         features["timeframe"] = tf.value
         features["bar_timestamp"] = str(bar.timestamp)
 
+        # v2: Sanitize — replace NaN/inf with safe defaults
+        return self._validate_features(features)
+
+    @staticmethod
+    def _validate_features(features: dict) -> dict:
+        """Replace NaN/inf values with 0.0 to prevent downstream model garbage."""
+        sanitized = {}
+        for key, value in features.items():
+            if isinstance(value, float):
+                if np.isnan(value) or np.isinf(value):
+                    sanitized[key] = 0.0
+                else:
+                    sanitized[key] = value
+            elif isinstance(value, np.floating):
+                v = float(value)
+                if np.isnan(v) or np.isinf(v):
+                    sanitized[key] = 0.0
+                else:
+                    sanitized[key] = v
+            else:
+                sanitized[key] = value
+        return sanitized
+
         return features
 
     def set_external_prices(self, symbol: str, prices: np.ndarray) -> None:
@@ -216,13 +239,23 @@ class FeatureEngine:
 
     @staticmethod
     def _compute_rsi(closes: np.ndarray, period: int = 14) -> float:
-        """Relative Strength Index."""
+        """Relative Strength Index using Wilder's exponential smoothing.
+        Matches MT5/TradingView standard RSI calculation.
+        """
         deltas = np.diff(closes)
-        gains = np.where(deltas > 0, deltas, 0)
-        losses = np.where(deltas < 0, -deltas, 0)
+        gains = np.where(deltas > 0, deltas, 0.0)
+        losses = np.where(deltas < 0, -deltas, 0.0)
 
-        avg_gain = np.mean(gains[-period:])
-        avg_loss = np.mean(losses[-period:])
+        if len(gains) < period:
+            avg_gain = np.mean(gains) if len(gains) > 0 else 0.0
+            avg_loss = np.mean(losses) if len(losses) > 0 else 0.0
+        else:
+            # Wilder's smoothing: first average is SMA, subsequent are exponential
+            avg_gain = np.mean(gains[:period])
+            avg_loss = np.mean(losses[:period])
+            for i in range(period, len(gains)):
+                avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+                avg_loss = (avg_loss * (period - 1) + losses[i]) / period
 
         if avg_loss == 0:
             return 100.0

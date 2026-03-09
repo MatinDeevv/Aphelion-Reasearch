@@ -15,7 +15,7 @@ try:
     
     from aphelion.intelligence.hydra.dataset import (
         HydraDataset,
-        HydraDataLoader,
+        create_dataloaders,
     )
     from aphelion.intelligence.hydra.trainer import (
         HydraTrainer,
@@ -45,14 +45,17 @@ try:
         "HydraGate",
         "EnsembleConfig",
         "HydraDataset",
-        "HydraDataLoader",
+        "create_dataloaders",
         "HydraTrainer",
         "TrainerConfig",
         "HydraInference",
         "InferenceConfig",
+        "HydraSignal",
         "HydraStrategy",
         "StrategyConfig",
+        "HAS_TORCH",
     ]
-except ImportError:
+except ModuleNotFoundError:
     # PyTorch not installed — module not available
-    __all__ = []
+    HAS_TORCH = False
+    __all__ = ["HAS_TORCH"]

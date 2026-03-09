@@ -145,10 +145,14 @@ class MonteCarloEngine:
             else:
                 pf = wins / losses
             path_profit_factors[path_i] = min(pf, 10.0)
-            # Vectorized equity path (replaces Python inner loop)
+            # Vectorized equity path with ruin freeze (once equity hits 0, stays 0)
             cum_pnl = np.cumsum(sampled)
             equity_path = initial_capital + cum_pnl
-            equity_path = np.maximum(equity_path, 0.0)
+            # Find first ruin index and freeze all subsequent values at 0
+            ruin_mask = equity_path <= 0.0
+            if np.any(ruin_mask):
+                first_ruin = int(np.argmax(ruin_mask))
+                equity_path[first_ruin:] = 0.0
             all_equity[path_i, 1:] = equity_path
 
         p5_curve = np.percentile(all_equity, 5, axis=0).tolist()

@@ -221,6 +221,8 @@ class MarketStructureEngine:
         flipping them into high-probability reversal zones.
         A bullish OB broken to the downside becomes a bearish breaker.
         A bearish OB broken to the upside becomes a bullish breaker.
+
+        v2: Also marks source order blocks as invalid (still_valid = False).
         """
         order_blocks = self.detect_order_blocks(opens, highs, lows, closes)
         breakers = []
@@ -231,6 +233,7 @@ class MarketStructureEngine:
                 if ob.direction == "BULLISH":
                     # Bullish OB invalidated when price closes below its low
                     if closes[i] < ob.price_low:
+                        ob.still_valid = False  # v2: mark source OB as invalid
                         breakers.append(BreakerBlock(
                             index=ob.index,
                             price_high=ob.price_high,
@@ -242,6 +245,7 @@ class MarketStructureEngine:
                 elif ob.direction == "BEARISH":
                     # Bearish OB invalidated when price closes above its high
                     if closes[i] > ob.price_high:
+                        ob.still_valid = False  # v2: mark source OB as invalid
                         breakers.append(BreakerBlock(
                             index=ob.index,
                             price_high=ob.price_high,
@@ -252,6 +256,30 @@ class MarketStructureEngine:
                         break
 
         return breakers
+
+    @staticmethod
+    def mark_filled_fvgs(fvgs: list[FairValueGap], closes: np.ndarray) -> list[FairValueGap]:
+        """Update FVG filled status based on subsequent price action.
+        A bullish FVG is filled when price retraces down into the gap.
+        A bearish FVG is filled when price retraces up into the gap.
+
+        Returns the same list with .filled updated in-place.
+        """
+        for fvg in fvgs:
+            if fvg.filled:
+                continue
+            for i in range(fvg.index + 1, len(closes)):
+                if fvg.direction == "BULLISH":
+                    # Filled when price comes back down into the gap
+                    if closes[i] <= fvg.gap_low:
+                        fvg.filled = True
+                        break
+                elif fvg.direction == "BEARISH":
+                    # Filled when price comes back up into the gap
+                    if closes[i] >= fvg.gap_high:
+                        fvg.filled = True
+                        break
+        return fvgs
 
     def detect_change_of_character(self, highs: np.ndarray, lows: np.ndarray,
                                     closes: np.ndarray) -> list[dict]:
@@ -299,6 +327,8 @@ class MarketStructureEngine:
         swing_lows = self.detect_swing_lows(lows)
         order_blocks = self.detect_order_blocks(opens, highs, lows, closes)
         fvgs = self.detect_fair_value_gaps(highs, lows)
+        # v2: Track FVG fill status
+        self.mark_filled_fvgs(fvgs, closes)
         liq_pools = self.detect_liquidity_pools(highs, lows)
         vol_imbalance = self.detect_volume_imbalance(closes, opens, volumes)
         choch = self.detect_change_of_character(highs, lows, closes)
@@ -339,9 +369,11 @@ class MarketStructureEngine:
             "nearest_swing_high": swing_highs[-1].price if swing_highs else 0,
             "nearest_swing_low": swing_lows[-1].price if swing_lows else 0,
             "order_block_count": len(order_blocks),
+            "valid_ob_count": sum(1 for ob in order_blocks if ob.still_valid),
             "nearest_ob_distance": nearest_ob_dist if nearest_ob_dist != float('inf') else 0,
             "nearest_ob_direction": nearest_ob_dir,
             "fvg_count": len(fvgs),
+            "unfilled_fvg_count": sum(1 for fvg in fvgs if not fvg.filled),
             "nearest_fvg_distance": nearest_fvg_dist if nearest_fvg_dist != float('inf') else 0,
             "liquidity_pool_count": len(liq_pools),
             "volume_imbalance": bool(vol_imbalance[-1]) if len(vol_imbalance) > 0 else False,

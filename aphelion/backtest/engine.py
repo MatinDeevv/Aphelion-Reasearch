@@ -122,6 +122,18 @@ class BacktestEngine:
             self._bar_index = i
             self._broker.set_bar_index(i)
 
+            # Bar integrity check — skip corrupted bars
+            if (
+                bar.close <= 0
+                or bar.high < bar.low
+                or any(
+                    v != v  # NaN check (x != x is True for NaN)
+                    for v in (bar.open, bar.high, bar.low, bar.close)
+                )
+            ):
+                self._portfolio.update_bar(bar, i)
+                continue
+
             # FIXED: Set simulated time so MarketClock uses bar timestamp
             bar_ts = bar.timestamp if isinstance(bar.timestamp, datetime) else None
             if bar_ts is not None:

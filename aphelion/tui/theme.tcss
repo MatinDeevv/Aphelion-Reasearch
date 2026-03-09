@@ -1,0 +1,185 @@
+/*
+ * APHELION TUI — Bloomberg Dark Theme (TCSS)
+ *
+ * Inspired by Bloomberg Terminal: dense, amber/green on dark,
+ * high information density, minimal wasted space.
+ */
+
+/* ─── Global ───────────────────────────────────────────────────── */
+Screen {
+    background: $surface;
+    color: $text;
+}
+
+/* ─── Header Bar ───────────────────────────────────────────────── */
+#header-bar {
+    dock: top;
+    height: 3;
+    background: rgb(10,10,40);
+    color: rgb(255,176,0);
+    border-bottom: solid rgb(40,40,100);
+    padding: 0 1;
+}
+
+#header-bar .session-name {
+    color: rgb(0,200,255);
+    text-style: bold;
+}
+
+#header-bar .clock {
+    color: rgb(255,176,0);
+    text-style: bold;
+}
+
+#header-bar .market-status {
+    text-style: bold;
+}
+
+/* ─── Tab Navigation ───────────────────────────────────────────── */
+TabbedContent {
+    height: 1fr;
+}
+
+TabPane {
+    padding: 0;
+}
+
+Tab {
+    color: rgb(180,180,180);
+    background: rgb(20,20,50);
+    border-right: solid rgb(40,40,100);
+    padding: 0 2;
+}
+
+Tab.-active {
+    color: rgb(255,176,0);
+    background: rgb(30,30,70);
+    text-style: bold;
+    border-bottom: solid rgb(255,176,0);
+}
+
+Tab:hover {
+    color: rgb(255,220,100);
+    background: rgb(25,25,60);
+}
+
+/* ─── Panels ───────────────────────────────────────────────────── */
+.panel-hydra {
+    border: solid rgb(0,120,255);
+    height: auto;
+    max-height: 20;
+}
+
+.panel-sentinel {
+    border: solid rgb(255,60,60);
+    height: auto;
+    max-height: 16;
+}
+
+.panel-positions {
+    border: solid rgb(0,200,100);
+    height: auto;
+    max-height: 12;
+}
+
+.panel-equity {
+    border: solid rgb(255,176,0);
+    height: auto;
+    max-height: 14;
+}
+
+.panel-log {
+    border: solid rgb(100,100,160);
+    min-height: 8;
+}
+
+.panel-performance {
+    border: solid rgb(200,100,255);
+    height: auto;
+}
+
+/* ─── Data Tables ──────────────────────────────────────────────── */
+DataTable {
+    height: auto;
+    max-height: 14;
+}
+
+DataTable > .datatable--header {
+    background: rgb(20,20,60);
+    color: rgb(0,200,255);
+    text-style: bold;
+}
+
+DataTable > .datatable--cursor {
+    background: rgb(40,40,100);
+    color: rgb(255,220,100);
+}
+
+DataTable > .datatable--even-row {
+    background: rgb(15,15,35);
+}
+
+DataTable > .datatable--odd-row {
+    background: rgb(10,10,30);
+}
+
+/* ─── Status Bar ───────────────────────────────────────────────── */
+#status-bar {
+    dock: bottom;
+    height: 1;
+    background: rgb(10,10,40);
+    color: rgb(140,140,180);
+    border-top: solid rgb(40,40,100);
+}
+
+/* ─── Alert Banner ─────────────────────────────────────────────── */
+.alert-critical {
+    background: rgb(180,0,0);
+    color: white;
+    text-style: bold;
+    padding: 0 2;
+}
+
+.alert-warning {
+    background: rgb(180,120,0);
+    color: white;
+    text-style: bold;
+    padding: 0 2;
+}
+
+/* ─── Custom Widget Styles ─────────────────────────────────────── */
+.gauge-container {
+    height: 1;
+    padding: 0 1;
+}
+
+.sparkline-container {
+    height: 3;
+    padding: 0 1;
+}
+
+/* ─── Grid Layouts ─────────────────────────────────────────────── */
+#dashboard-grid {
+    layout: grid;
+    grid-size: 2 3;
+    grid-gutter: 0 1;
+    grid-rows: auto auto 1fr;
+    padding: 0;
+}
+
+#dashboard-grid > * {
+    height: auto;
+}
+
+#analytics-grid {
+    layout: grid;
+    grid-size: 2 2;
+    grid-gutter: 0 1;
+    padding: 0;
+}
+
+/* ─── Scrollable regions ───────────────────────────────────────── */
+.scroll-region {
+    overflow-y: auto;
+    height: 1fr;
+}

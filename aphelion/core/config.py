@@ -26,6 +26,20 @@ class SessionWindow:
     close_hour: int
     close_minute: int
 
+    def adjusted(self, offset_minutes: int = 0) -> "SessionWindow":
+        """Return a new SessionWindow shifted by *offset_minutes* (e.g. -60 for summer DST)."""
+        if offset_minutes == 0:
+            return self
+        o = self.open_hour * 60 + self.open_minute + offset_minutes
+        c = self.close_hour * 60 + self.close_minute + offset_minutes
+        return SessionWindow(
+            name=self.name,
+            open_hour=(o // 60) % 24,
+            open_minute=o % 60,
+            close_hour=(c // 60) % 24,
+            close_minute=c % 60,
+        )
+
 
 SESSION_WINDOWS: Final = [
     SessionWindow(Session.ASIAN,          0,  0,  8, 0),
@@ -51,6 +65,24 @@ class SentinelLimits:
     daily_equity_drawdown_l2: float = 0.06  # 6% drawdown → L2 halt (no new trades)
     daily_equity_drawdown_l3: float = 0.10  # 10% drawdown → L3 disconnect
     lot_size_oz: float = 100.0              # XAU/USD lot size: 1 lot = 100 oz
+
+    def __post_init__(self) -> None:
+        """Validate invariants — breaker tiers must be strictly ascending."""
+        if not (0 < self.daily_equity_drawdown_l1
+                < self.daily_equity_drawdown_l2
+                < self.daily_equity_drawdown_l3 <= 1.0):
+            raise ValueError(
+                f"Breaker tiers must satisfy 0 < L1 < L2 < L3 <= 1.0, "
+                f"got L1={self.daily_equity_drawdown_l1}, "
+                f"L2={self.daily_equity_drawdown_l2}, "
+                f"L3={self.daily_equity_drawdown_l3}"
+            )
+        if self.max_position_pct <= 0:
+            raise ValueError(f"max_position_pct must be > 0, got {self.max_position_pct}")
+        if self.min_risk_reward <= 0:
+            raise ValueError(f"min_risk_reward must be > 0, got {self.min_risk_reward}")
+        if self.max_simultaneous_positions < 1:
+            raise ValueError(f"max_simultaneous_positions must be >= 1, got {self.max_simultaneous_positions}")
 
 
 SENTINEL: Final = SentinelLimits()
@@ -86,9 +118,21 @@ class Timeframe(Enum):
     M5 = "5m"
     M15 = "15m"
     H1 = "1h"
+    D1 = "1d"
+    W1 = "1w"
 
 
 TIMEFRAMES: Final = [Timeframe.M1, Timeframe.M5, Timeframe.M15, Timeframe.H1]
+
+# Canonical seconds per timeframe — single source of truth for all modules
+TIMEFRAME_SECONDS: Final[dict[Timeframe, int]] = {
+    Timeframe.M1: 60,
+    Timeframe.M5: 300,
+    Timeframe.M15: 900,
+    Timeframe.H1: 3600,
+    Timeframe.D1: 86400,
+    Timeframe.W1: 604800,
+}
 
 
 # ─── Event Bus Topics ────────────────────────────────────────────────────────

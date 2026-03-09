@@ -201,7 +201,7 @@ class PerformanceAnalyzer:
 
         rf_daily = self._risk_free_rate / 252.0
         excess = np.array([ret - rf_daily for ret in returns], dtype=float)
-        downside = np.array([ret for ret in returns if ret < 0], dtype=float)
+        downside = excess[excess < 0]  # FIXED: use excess returns for downside consistency
         downside_std = float(np.std(downside)) if len(downside) > 0 else 0.0
         if downside_std < 1e-10:  # FIXED: floating-point epsilon guard
             return 0.0
@@ -429,6 +429,7 @@ class PerformanceAnalyzer:
         }
 
     def score(self) -> float:
+        """Composite strategy score normalized to [0, 1] range."""
         if self.total_trades < 30:
             return 0.0
         if self.win_rate < 0.40:
@@ -436,11 +437,12 @@ class PerformanceAnalyzer:
         if self.max_drawdown > 0.20:
             return 0.0
 
-        s = self.sharpe_ratio
-        c = self.calmar_ratio
-        pf = min(self.profit_factor, 5.0)
-        wr = self.win_rate
-        re = max(0.0, self.r_expectancy)
+        # Normalize all components to [0, 1] range for fair weighting
+        s = min(max(self.sharpe_ratio, 0.0), 4.0) / 4.0     # Sharpe capped at 4
+        c = min(max(self.calmar_ratio, 0.0), 5.0) / 5.0     # Calmar capped at 5
+        pf = min(max(self.profit_factor, 0.0), 5.0) / 5.0   # PF capped at 5
+        wr = min(max(self.win_rate, 0.0), 1.0)               # Already [0,1]
+        re = min(max(self.r_expectancy, 0.0), 2.0) / 2.0    # R-expectancy capped at 2
         consistency = 1.0 - (self.consecutive_losses / max(self.total_trades, 1))
 
         raw = (s * 0.30) + (c * 0.25) + (pf * 0.15) + (wr * 0.15) + (re * 0.15)

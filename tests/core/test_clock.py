@@ -124,6 +124,7 @@ class TestSessionFeatures:
             "is_month_end", "is_quarter_end", "is_friday_lockout",
             "is_news_lockout", "market_open", "is_trading_session",
             "hour_sin", "hour_cos", "dow_sin", "dow_cos", "dom_sin", "dom_cos",
+            "minutes_into_session", "session_duration_minutes", "session_progress",
         }
         assert set(features.keys()) == expected_keys
 

@@ -54,6 +54,7 @@ class SentinelMonitor:
         while self._running:
             try:
                 await self._check_positions()
+                await self._check_friday_close()
                 await asyncio.sleep(self._check_interval_ms / 1000.0)
             except asyncio.CancelledError:
                 break
@@ -85,10 +86,29 @@ class SentinelMonitor:
                 ))
 
     async def _check_friday_close(self) -> None:
-        # TODO: Phase 5 — force-close all positions 30 min before Friday 21:00 UTC close.
-        # Will use MarketClock.is_friday_lockout() to detect the window and
-        # publish a FULL_HALT_CLOSE_ALL RISK event for each open position.
-        pass
+        """Force-close all positions 30 min before Friday 21:00 UTC close (Section 6.4)."""
+        if not hasattr(self._sentinel, '_clock'):
+            return
+        clock = self._sentinel._clock
+        if clock is None:
+            return
+        if not clock.is_friday_lockout():
+            return
+        positions = self._sentinel.get_open_positions()
+        for position in positions:
+            self._event_bus.publish_nowait(Event(
+                topic=EventTopic.RISK,
+                data={
+                    "action": "FRIDAY_CLOSE",
+                    "position_id": position.position_id,
+                    "entry": position.entry_price,
+                    "current_price": self._last_price,
+                    "direction": position.direction,
+                    "reason": "Friday close lockout — 30 min before market close",
+                },
+                source="SENTINEL",
+                priority=Priority.CRITICAL,
+            ))
 
     # ── Stats ─────────────────────────────────────────────────────────────────
 

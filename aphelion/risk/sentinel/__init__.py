@@ -7,6 +7,8 @@ from aphelion.risk.sentinel.validator import (
     TradeValidator,
     ValidationResult,
 )
+from aphelion.risk.sentinel.circuit_breaker import CircuitBreaker
+from aphelion.risk.sentinel.execution.enforcer import ExecutionEnforcer
 
 __all__ = [
     "Position",
@@ -15,4 +17,6 @@ __all__ = [
     "TradeProposal",
     "TradeValidator",
     "ValidationResult",
+    "CircuitBreaker",
+    "ExecutionEnforcer",
 ]

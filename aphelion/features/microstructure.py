@@ -134,25 +134,30 @@ class OFICalculator:
 
     @property
     def normalized(self) -> float:
-        """OFI normalized to [-1, 1] range using window max."""
+        """OFI normalized to [-1, 1] using rolling z-score (v2 — more stable)."""
+        if len(self._ofi_values) < 2:
+            return 0.0
         raw = sum(self._ofi_values)
-        if not self._ofi_values:
+        vals = list(self._ofi_values)
+        mean = sum(vals) / len(vals)
+        variance = sum((v - mean) ** 2 for v in vals) / len(vals)
+        std = variance ** 0.5
+        if std == 0:
             return 0.0
-        abs_max = max(abs(v) for v in self._ofi_values)
-        if abs_max == 0:
-            return 0.0
-        return max(-1.0, min(1.0, raw / (abs_max * len(self._ofi_values))))
+        z = (raw - mean * len(vals)) / (std * len(vals))
+        return max(-1.0, min(1.0, z))
 
 
 class TickEntropyCalculator:
     """
-    Shannon entropy of tick direction sequence.
-    Low entropy = directional movement, High entropy = noise.
+    Shannon entropy of tick direction sequence (v2 — 3-state model).
+    States: UP (+1), DOWN (-1), FLAT (0).
+    Max entropy ~1.585 bits. Low = directional, High = noise.
     """
 
     def __init__(self, window: int = 100):
         self._window = window
-        self._directions: deque[int] = deque(maxlen=window)  # +1 or -1
+        self._directions: deque[int] = deque(maxlen=window)  # +1, -1, or 0
         self._last_price: float = 0.0
 
     def update(self, price: float) -> float:
@@ -160,7 +165,13 @@ class TickEntropyCalculator:
             self._last_price = price
             return 1.0  # Maximum entropy initially
 
-        direction = 1 if price >= self._last_price else -1
+        if price > self._last_price:
+            direction = 1
+        elif price < self._last_price:
+            direction = -1
+        else:
+            direction = 0  # v2: FLAT state
+
         self._directions.append(direction)
         self._last_price = price
 
@@ -172,15 +183,15 @@ class TickEntropyCalculator:
     def _compute(self) -> float:
         n = len(self._directions)
         ups = sum(1 for d in self._directions if d == 1)
-        downs = n - ups
+        downs = sum(1 for d in self._directions if d == -1)
+        flats = n - ups - downs
 
-        if ups == 0 or downs == 0:
-            return 0.0  # Perfect directionality
+        entropy = 0.0
+        for count in (ups, downs, flats):
+            if count > 0:
+                p = count / n
+                entropy -= p * np.log2(p)
 
-        p_up = ups / n
-        p_down = downs / n
-
-        entropy = -(p_up * np.log2(p_up) + p_down * np.log2(p_down))
         return entropy
 
 

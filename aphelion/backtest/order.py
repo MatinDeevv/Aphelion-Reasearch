@@ -89,15 +89,28 @@ class BacktestTrade:
     entry_bar_index: int
     exit_bar_index: int
 
+    _LOT_SIZE_OZ: float = 100.0  # oz per standard lot (XAU/USD)
+
     @property
     def pnl_pct(self) -> float:
-        if self.size_pct == 0:
+        """P&L as percentage of initial risk (dollar-risk denominator)."""
+        risk_dollars = (
+            abs(self.entry_price - self.stop_loss)
+            * self.size_lots
+            * self._LOT_SIZE_OZ
+        )
+        if risk_dollars == 0:
             return 0.0
-        return self.net_pnl / (self.size_pct * 10000)  # Relative to risk
+        return (self.net_pnl / risk_dollars) * 100.0
 
     @property
     def r_multiple(self) -> float:
-        risk = abs(self.entry_price - self.stop_loss) * self.size_lots
+        """Net P&L expressed as a multiple of initial dollar risk."""
+        risk = (
+            abs(self.entry_price - self.stop_loss)
+            * self.size_lots
+            * self._LOT_SIZE_OZ  # Must match portfolio PnL calc
+        )
         if risk == 0:
             return 0.0
         return self.net_pnl / risk

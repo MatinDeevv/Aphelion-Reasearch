@@ -69,23 +69,17 @@ class TestBacktestTrade:
         # Actually r_multiple = net_pnl / (abs(entry-sl) * size_lots)
         # = 19.86 / (10 * 0.01) = 19.86 / 0.1 = 198.6
         # Hmm, that's not 2.0. Let me recalculate.
-        # The r_multiple formula in order.py: risk = abs(entry - sl) * size_lots
-        # = |2850-2840| * 0.01 = 0.1
-        # net_pnl / risk = 19.86 / 0.1 = 198.6
-        # This is NOT 2R. The issue is that r_multiple divides by risk
-        # which doesn't include the lot_size_oz multiplication.
-        # So: risk = 10 * 0.01 = 0.10, pnl = 20 - 0.14 = 19.86
-        # R = 19.86 / 0.10 = 198.6
-        # The spec says "R=2.0" but the formula in code gives much higher.
-        # Let's just test what the code actually produces.
+        # The r_multiple formula in order.py: risk = abs(entry - sl) * size_lots * 100
+        # = |2850-2840| * 0.01 * 100 = 10.0
+        # net_pnl / risk = 20.0 / 10.0 = 2.0R (CORRECT)
         t = self._make_trade(
             direction="LONG", entry=2850.0, exit_=2870.0,
             sl=2840.0, lots=0.01, commission=0.0,
         )
         # gross_pnl = (2870-2850)*0.01*100 = 20.0
-        # risk = |2850-2840| * 0.01 = 0.1
-        # r_multiple = 20.0 / 0.1 = 200.0
-        assert t.r_multiple == pytest.approx(200.0, rel=0.01)
+        # risk = |2850-2840| * 0.01 * 100 = 10.0
+        # r_multiple = 20.0 / 10.0 = 2.0R
+        assert t.r_multiple == pytest.approx(2.0, rel=0.01)
 
     def test_backtest_trade_r_multiple_short_symmetric(self):
         t = self._make_trade(
@@ -93,9 +87,9 @@ class TestBacktestTrade:
             sl=2870.0, lots=0.01, commission=0.0,
         )
         # gross_pnl = (2860-2840)*0.01*100 = 20.0
-        # risk = |2860-2870| * 0.01 = 0.1
-        # r_multiple = 20.0 / 0.1 = 200.0
-        assert t.r_multiple == pytest.approx(200.0, rel=0.01)
+        # risk = |2860-2870| * 0.01 * 100 = 10.0
+        # r_multiple = 20.0 / 10.0 = 2.0R
+        assert t.r_multiple == pytest.approx(2.0, rel=0.01)
 
     def test_backtest_trade_r_multiple_zero_risk(self):
         t = self._make_trade(

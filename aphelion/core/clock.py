@@ -50,13 +50,48 @@ class MarketClock:
         minute = dt.minute
         time_minutes = hour * 60 + minute
 
-        for window in SESSION_WINDOWS:
+        # v2: Apply DST offsets to session windows for correct detection year-round
+        adjusted_windows = self._get_adjusted_windows()
+        for window in adjusted_windows:
             start = window.open_hour * 60 + window.open_minute
             end = window.close_hour * 60 + window.close_minute
             if start <= time_minutes < end:
                 return window.name
 
         return Session.DEAD_ZONE
+
+    def _get_adjusted_windows(self) -> list[SessionWindow]:
+        """Return session windows adjusted for current DST offsets."""
+        adjusted = []
+        for w in SESSION_WINDOWS:
+            # London and Overlap sessions are affected by London DST
+            if w.name in (Session.LONDON, Session.OVERLAP_LDN_NY):
+                w = w.adjusted(self._dst_offset_london)
+            # New York session is affected by NY DST
+            elif w.name == Session.NEW_YORK:
+                w = w.adjusted(self._dst_offset_ny)
+            adjusted.append(w)
+        return adjusted
+
+    def auto_detect_dst(self, dt: Optional[datetime] = None) -> None:
+        """Auto-detect DST offsets using zoneinfo (Python 3.9+ stdlib).
+        In summer: London/NY sessions shift 1 hour earlier (offset = -60).
+        """
+        dt = dt or self.now_utc()
+        try:
+            from zoneinfo import ZoneInfo
+            london = dt.astimezone(ZoneInfo("Europe/London"))
+            ny = dt.astimezone(ZoneInfo("America/New_York"))
+            # UTC offset in minutes; DST adds +60 to local time, so sessions
+            # move -60 in UTC terms
+            london_utcoff = london.utcoffset().total_seconds() / 60
+            ny_utcoff = ny.utcoffset().total_seconds() / 60
+            # London is UTC+0 in winter, UTC+1 in summer → session offset = -(utcoff)
+            self._dst_offset_london = -int(london_utcoff)
+            # NY is UTC-5 in winter, UTC-4 in summer → session offset = -(utcoff + 300)
+            self._dst_offset_ny = -int(ny_utcoff + 300)
+        except ImportError:
+            pass  # zoneinfo not available; keep manual offsets
 
     def is_market_open(self, dt: Optional[datetime] = None) -> bool:
         dt = dt or self.now_utc()
@@ -211,6 +246,39 @@ class MarketClock:
         dt = dt or self.now_utc()
         return dt.month in (3, 6, 9, 12) and self.is_month_end(dt)
 
+    def minutes_into_session(self, dt: Optional[datetime] = None) -> float:
+        """Minutes elapsed since the current session opened. 0 if in DEAD_ZONE."""
+        dt = dt or self.now_utc()
+        session = self.current_session(dt)
+        if session == Session.DEAD_ZONE:
+            return 0.0
+        current_minutes = dt.hour * 60 + dt.minute
+        for window in self._get_adjusted_windows():
+            if window.name == session:
+                start = window.open_hour * 60 + window.open_minute
+                return max(0.0, current_minutes - start)
+        return 0.0
+
+    def session_duration_minutes(self, dt: Optional[datetime] = None) -> float:
+        """Duration of the current session in minutes. 0 if in DEAD_ZONE."""
+        dt = dt or self.now_utc()
+        session = self.current_session(dt)
+        if session == Session.DEAD_ZONE:
+            return 0.0
+        for window in self._get_adjusted_windows():
+            if window.name == session:
+                start = window.open_hour * 60 + window.open_minute
+                end = window.close_hour * 60 + window.close_minute
+                return max(0.0, end - start)
+        return 0.0
+
+    def session_progress(self, dt: Optional[datetime] = None) -> float:
+        """Fraction through current session [0.0, 1.0]. 0 if in DEAD_ZONE."""
+        dur = self.session_duration_minutes(dt)
+        if dur == 0:
+            return 0.0
+        return min(1.0, self.minutes_into_session(dt) / dur)
+
     def session_features(self, dt: Optional[datetime] = None) -> dict:
         """Return session-aware features including cyclical time encoding for ML models."""
         dt = dt or self.now_utc()
@@ -232,6 +300,9 @@ class MarketClock:
             "minutes_to_london_open": self.minutes_to_session(Session.LONDON, dt),
             "minutes_to_ny_open": self.minutes_to_session(Session.NEW_YORK, dt),
             "minutes_to_session_close": self.minutes_to_close(dt),
+            "minutes_into_session": self.minutes_into_session(dt),
+            "session_duration_minutes": self.session_duration_minutes(dt),
+            "session_progress": self.session_progress(dt),
             "day_of_week": self.day_of_week(dt),
             "week_of_month": self.week_of_month(dt),
             "minutes_to_next_news": self.minutes_to_next_news(dt),
