@@ -261,3 +261,26 @@ class TUIBridge:
     def alert(self, severity: str, title: str, message: str) -> None:
         """Push an alert notification."""
         self._state.push_alert(severity, title, message)
+
+    # ── Feed Status (v3 — Phase 5) ─────────────────────────────
+
+    def update_feed_status(
+        self,
+        connected: bool,
+        mode: str = "SIMULATED",
+        ticks_per_min: float = 0.0,
+        reconnect_count: int = 0,
+    ) -> None:
+        """Push feed connection and throughput stats."""
+        self._state.feed_connected = connected
+        self._state.feed_mode = mode
+        self._state.feed_ticks_per_min = ticks_per_min
+        self._state.feed_reconnect_count = reconnect_count
+
+    def update_session_duration(self, duration_minutes: float) -> None:
+        """Push session elapsed time."""
+        self._state.session_duration_min = duration_minutes
+
+    def update_sentinel_rejections(self, count: int) -> None:
+        """Push sentinel rejection counter."""
+        self._state.sentinel_rejections = count

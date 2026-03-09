@@ -52,3 +52,30 @@
 {"ts": "2026-03-09T00:49:15.411354+00:00", "session": "test_stop", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_stop", "ledger_path": "logs\\paper\\paper_test_stop.jsonl"}}
 {"ts": "2026-03-09T00:49:15.411570+00:00", "session": "test_stop", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
 {"ts": "2026-03-09T00:49:15.425228+00:00", "session": "test_stop", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 14, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0}}
+{"ts": "2026-03-09T01:37:58.983074+00:00", "session": "test_stop", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_stop", "ledger_path": "logs\\paper\\paper_test_stop.jsonl"}}
+{"ts": "2026-03-09T01:37:58.983263+00:00", "session": "test_stop", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
+{"ts": "2026-03-09T01:37:58.997437+00:00", "session": "test_stop", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 15, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0}}
+{"ts": "2026-03-09T01:39:11.640710+00:00", "session": "test_stop", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_stop", "ledger_path": "logs\\paper\\paper_test_stop.jsonl"}}
+{"ts": "2026-03-09T01:39:11.640939+00:00", "session": "test_stop", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
+{"ts": "2026-03-09T01:39:11.655184+00:00", "session": "test_stop", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 16, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0}}
+{"ts": "2026-03-09T01:41:31.316627+00:00", "session": "test_stop", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_stop", "ledger_path": "logs\\paper\\paper_test_stop.jsonl"}}
+{"ts": "2026-03-09T01:41:31.317069+00:00", "session": "test_stop", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
+{"ts": "2026-03-09T01:41:31.335192+00:00", "session": "test_stop", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 8, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0}}
+{"ts": "2026-03-09T01:43:53.945993+00:00", "session": "test_stop", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_stop", "ledger_path": "logs\\paper\\paper_test_stop.jsonl"}}
+{"ts": "2026-03-09T01:43:53.946209+00:00", "session": "test_stop", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
+{"ts": "2026-03-09T01:43:53.959695+00:00", "session": "test_stop", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 14, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0}}
+{"ts": "2026-03-09T02:41:13.055128+00:00", "session": "test_stop", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_stop", "ledger_path": "logs\\paper\\paper_test_stop.jsonl"}}
+{"ts": "2026-03-09T02:41:13.055556+00:00", "session": "test_stop", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
+{"ts": "2026-03-09T02:41:13.079150+00:00", "session": "test_stop", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 6, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0}}
+{"ts": "2026-03-09T02:46:03.735787+00:00", "session": "test_stop", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_stop", "ledger_path": "logs\\paper\\paper_test_stop.jsonl"}}
+{"ts": "2026-03-09T02:46:03.736264+00:00", "session": "test_stop", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
+{"ts": "2026-03-09T02:46:03.761978+00:00", "session": "test_stop", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 6, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0}}
+{"ts": "2026-03-09T03:46:40.253549+00:00", "session": "test_stop", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_stop", "ledger_path": "logs\\paper\\paper_test_stop.jsonl"}}
+{"ts": "2026-03-09T03:46:40.253886+00:00", "session": "test_stop", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
+{"ts": "2026-03-09T03:46:40.269235+00:00", "session": "test_stop", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 11, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0}}
+{"ts": "2026-03-09T04:31:55.411552+00:00", "session": "test_stop", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_stop", "ledger_path": "logs\\paper\\paper_test_stop.jsonl"}}
+{"ts": "2026-03-09T04:31:55.411846+00:00", "session": "test_stop", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
+{"ts": "2026-03-09T04:31:55.429650+00:00", "session": "test_stop", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 8, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0}}
+{"ts": "2026-03-09T04:34:51.151819+00:00", "session": "test_stop", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_stop", "ledger_path": "logs\\paper\\paper_test_stop.jsonl"}}
+{"ts": "2026-03-09T04:34:51.152166+00:00", "session": "test_stop", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
+{"ts": "2026-03-09T04:34:51.176179+00:00", "session": "test_stop", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 6, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0}}

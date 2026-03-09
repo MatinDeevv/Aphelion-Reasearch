@@ -16,7 +16,7 @@ from aphelion.backtest.order import BacktestTrade
 
 
 @dataclass
-class MonteCarloConfig:
+class  MonteCarloConfig:
     """Configuration for Monte Carlo simulation."""
 
     num_paths: int = 500

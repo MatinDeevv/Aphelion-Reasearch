@@ -94,6 +94,11 @@ class MT5Connection:
                     "MT5 connect attempt %d/%d failed: %s",
                     attempt, self._config.retry_attempts, error,
                 )
+                if isinstance(error, tuple) and len(error) >= 2 and error[0] == -10005:
+                    logger.warning(
+                        "MT5 IPC timeout detected. Ensure terminal is open, account is logged in, "
+                        "and pass --mt5-terminal with terminal64.exe path if auto-detect fails."
+                    )
                 if attempt < self._config.retry_attempts:
                     import time
                     time.sleep(self._config.retry_delay_seconds)

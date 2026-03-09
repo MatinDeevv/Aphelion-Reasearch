@@ -188,6 +188,14 @@ class TUIState:
     latency_ms: float = 0.0
     uptime_seconds: float = 0.0
 
+    # Feed status (v3 — Phase 5)
+    feed_connected: bool = False
+    feed_mode: str = "SIMULATED"
+    feed_ticks_per_min: float = 0.0
+    feed_reconnect_count: int = 0
+    session_duration_min: float = 0.0
+    sentinel_rejections: int = 0
+
     def push_log(self, level: str, message: str) -> None:
         """Append a log entry, trimming old entries if needed."""
         self.log.append(LogEntry(
