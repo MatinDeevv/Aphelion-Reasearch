@@ -179,21 +179,24 @@ def load_real_data(csv_path: str) -> pd.DataFrame:
     tr = np.maximum(high - low, np.maximum(np.abs(high - np.roll(close, 1)), np.abs(low - np.roll(close, 1))))
     tr[0] = high[0] - low[0]
     atr = pd.Series(tr).rolling(14, min_periods=1).mean().values
+    atr_safe = np.where(atr > 1e-10, atr, 1.0)  # Avoid division by zero
 
     # RSI (14-period)
     delta = np.diff(close, prepend=close[0])
     gain = np.where(delta > 0, delta, 0.0)
-    loss = np.where(delta < 0, -delta, 0.0)
+    loss_arr = np.where(delta < 0, -delta, 0.0)
     avg_gain = pd.Series(gain).ewm(span=14, min_periods=1).mean().values
-    avg_loss = pd.Series(loss).ewm(span=14, min_periods=1).mean().values
-    rs = np.where(avg_loss > 0, avg_gain / avg_loss, 100.0)
+    avg_loss = pd.Series(loss_arr).ewm(span=14, min_periods=1).mean().values
+    with np.errstate(divide='ignore', invalid='ignore'):
+        rs = np.where(avg_loss > 1e-10, avg_gain / avg_loss, 100.0)
     rsi = 100.0 - 100.0 / (1.0 + rs)
 
     # Bollinger Band width
     sma20 = pd.Series(close).rolling(20, min_periods=1).mean().values
-    std20 = pd.Series(close).rolling(20, min_periods=1).std().values
-    std20[std20 < 1e-8] = 1e-8
-    bb_width = (2 * std20) / sma20 * 100
+    std20 = pd.Series(close).rolling(20, min_periods=1).std(ddof=0).values
+    std20_safe = np.where(std20 > 1e-10, std20, 1.0)  # Avoid division by zero
+    sma20_safe = np.where(np.abs(sma20) > 1e-10, sma20, 1.0)
+    bb_width = (2 * std20_safe) / sma20_safe * 100
 
     # EMAs
     ema20 = pd.Series(close).ewm(span=20, min_periods=1).mean().values
@@ -209,20 +212,20 @@ def load_real_data(csv_path: str) -> pd.DataFrame:
     bar_delta[0] = 0
     cum_delta = np.cumsum(bar_delta)
 
-    # Assign computed features
+    # Assign computed features — use safe denominators everywhere
     df["atr"] = atr
     df["rsi"] = rsi
     df["bb_width"] = bb_width
-    df["bb_percentile"] = (close - (sma20 - std20)) / (2 * std20)
+    df["bb_percentile"] = np.clip((close - (sma20 - std20_safe)) / (2 * std20_safe), -5, 5)
     df["ema_20"] = ema20
     df["ema_50"] = ema50
-    df["ema_cross"] = (ema20 - ema50) / atr
+    df["ema_cross"] = (ema20 - ema50) / atr_safe
     df["vwap"] = vwap
-    df["price_vs_vwap"] = (close - vwap) / atr
-    df["vwap_upper_1"] = vwap + std20
-    df["vwap_lower_1"] = vwap - std20
-    df["vwap_upper_2"] = vwap + 2 * std20
-    df["vwap_lower_2"] = vwap - 2 * std20
+    df["price_vs_vwap"] = (close - vwap) / atr_safe
+    df["vwap_upper_1"] = vwap + std20_safe
+    df["vwap_lower_1"] = vwap - std20_safe
+    df["vwap_upper_2"] = vwap + 2 * std20_safe
+    df["vwap_lower_2"] = vwap - 2 * std20_safe
     df["volume_delta"] = bar_delta
     df["cumulative_delta"] = cum_delta
     df["mtf_alignment_score"] = 0.0
@@ -233,6 +236,17 @@ def load_real_data(csv_path: str) -> pd.DataFrame:
     for feat in CONTINUOUS_FEATURES:
         if feat not in df.columns:
             df[feat] = 0.0
+
+    # ── CRITICAL: Clean NaN/Inf — these would destroy training ──
+    for feat in CONTINUOUS_FEATURES:
+        col = df[feat].values
+        nan_count = np.isnan(col).sum() + np.isinf(col).sum()
+        if nan_count > 0:
+            logger.warning(f"  Feature '{feat}' has {nan_count} NaN/Inf values — filling with 0")
+            df[feat] = np.nan_to_num(col, nan=0.0, posinf=0.0, neginf=0.0)
+
+    total_nans = df[CONTINUOUS_FEATURES].isna().sum().sum()
+    logger.info(f"Feature sanity check: {total_nans} NaN remaining (should be 0)")
 
     return df
 

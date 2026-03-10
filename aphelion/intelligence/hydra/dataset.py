@@ -113,13 +113,15 @@ def _extract_features_from_bar_dict(
     for i, key in enumerate(CONTINUOUS_FEATURES):
         val = features.get(key, 0.0)
         if isinstance(val, (int, float)):
-            cont[i] = float(val)
+            v = float(val)
+            cont[i] = v if np.isfinite(v) else 0.0
         elif isinstance(val, str):
             cont[i] = 0.0
         elif val is None:
             cont[i] = 0.0
         else:
-            cont[i] = float(val)
+            v = float(val)
+            cont[i] = v if np.isfinite(v) else 0.0
 
     cat = np.zeros(len(CATEGORICAL_FEATURES), dtype=np.int64)
     session_val = features.get("session", "DEAD_ZONE")
@@ -177,6 +179,13 @@ def build_dataset_from_feature_dicts(
     feature_stds[feature_stds < 1e-8] = 1.0  # Avoid division by zero
 
     cont_matrix = (cont_matrix - feature_means) / feature_stds
+
+    # Belt-and-suspenders: clean any remaining NaN/Inf after normalization
+    nan_mask = ~np.isfinite(cont_matrix)
+    if nan_mask.any():
+        n_bad = nan_mask.sum()
+        print(f"  ⚠ Cleaning {n_bad} NaN/Inf values in normalized features")
+        cont_matrix = np.nan_to_num(cont_matrix, nan=0.0, posinf=0.0, neginf=0.0)
 
     # Build direction labels for each horizon
     # Label: 0=SHORT, 1=FLAT, 2=LONG

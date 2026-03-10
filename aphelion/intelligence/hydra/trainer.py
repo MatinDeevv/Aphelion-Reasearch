@@ -460,6 +460,14 @@ if HAS_TORCH:
                 cont, cat, y5m, y15m, y1h, raw_ret = [b.to(self._device) for b in batch]
                 targets = [y5m, y15m, y1h]
 
+                # ── NaN input guard ──
+                if torch.isnan(cont).any() or torch.isinf(cont).any():
+                    if batch_idx == 0:
+                        print(f"    ⚠ NaN/Inf in input features at batch {batch_idx} — skipping")
+                    continue
+                if torch.isnan(raw_ret).any() or torch.isinf(raw_ret).any():
+                    raw_ret = torch.nan_to_num(raw_ret, nan=0.0, posinf=0.0, neginf=0.0)
+
                 # Mixup augmentation
                 if cfg.mixup_alpha > 0 and self.training_uses_mixup:
                     cont, cat, y5m, y15m, y1h, raw_ret, mixup_info = self._mixup_data(
@@ -519,6 +527,17 @@ if HAS_TORCH:
 
                     # Scale for gradient accumulation
                     loss = loss / cfg.gradient_accumulation_steps
+
+                # ── NaN loss guard ──
+                if torch.isnan(loss) or torch.isinf(loss):
+                    if batch_idx < 3:
+                        print(f"    ⚠ NaN/Inf loss at batch {batch_idx} — "
+                              f"cls={loss_cls.item():.4f} q={loss_q.item():.4f} "
+                              f"aux={total_aux.item():.4f} moe={moe_lb_loss.item():.4f}")
+                    self._optimizer.zero_grad(set_to_none=True)
+                    n_batches += 1
+                    batch_times.append(time.time() - batch_t0)
+                    continue
 
                 self._scaler.scale(loss).backward()
 

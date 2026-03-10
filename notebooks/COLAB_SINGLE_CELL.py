@@ -256,12 +256,13 @@ def run_one_round(data_file, max_epochs, tag, description):
     feature_dicts = df.to_dict(orient="records")
     close_prices = df["close"].values
 
-    # Build datasets with A100-optimized settings
+    # Build datasets — num_workers=0 is REQUIRED for Colab exec() context
+    # (multiprocessing workers crash with 'can only test a child process')
     ds_config = DatasetConfig(
         val_split=0.15,
         test_split=0.15,
         batch_size=BATCH_SIZE,
-        num_workers=NUM_WORKERS,
+        num_workers=0,
         lookback_bars=64,
     )
     train_ds, val_ds, test_ds, means, stds = build_dataset_from_feature_dicts(
