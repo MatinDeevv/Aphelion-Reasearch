@@ -252,29 +252,21 @@ if HAS_TORCH:
             # Top-K routing
             routing_weights, top_k_idx, load_balance_loss = self.router(router_input)
 
-            # OPTIMIZED: Only run top-K experts per sample (not all 8)
+            # OPTIMIZED: Run all experts but apply sparse routing weights
+            # This avoids .item() calls that break torch.compile/CUDAGraphs
             batch_size = router_input.size(0)
             combined = torch.zeros(batch_size, cfg.hidden_size, device=router_input.device,
                                    dtype=router_input.dtype)
 
-            # Get the unique set of active experts across the batch
-            active_experts = top_k_idx.unique()
-
-            for expert_idx in active_experts:
-                expert_idx_item = expert_idx.item()
-                # Find which samples use this expert
-                sample_mask = (top_k_idx == expert_idx).any(dim=-1)  # (batch,)
-                if not sample_mask.any():
+            for i, expert in enumerate(self.experts):
+                # Skip experts with zero total weight (saves compute)
+                weight_i = routing_weights[:, i]  # (batch,)
+                if not self.training and weight_i.sum() == 0:
                     continue
-                # Only run expert on those samples
-                expert_input = router_input[sample_mask]
-                expert_output = self.experts[expert_idx_item](expert_input)
-                # Apply expert dropout during training
+                expert_output = expert(router_input)
                 if self.training:
                     expert_output = self.expert_dropout(expert_output)
-                # Weight by routing weight for this expert
-                weights = routing_weights[sample_mask, expert_idx_item].unsqueeze(-1)
-                combined[sample_mask] = combined[sample_mask] + weights.to(expert_output.dtype) * expert_output
+                combined = combined + weight_i.unsqueeze(-1).to(expert_output.dtype) * expert_output
 
             proj = self.output_proj(combined)
 
