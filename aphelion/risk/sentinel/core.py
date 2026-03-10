@@ -16,6 +16,13 @@ from datetime import datetime, date
 from aphelion.core.clock import MarketClock
 from aphelion.core.config import EventTopic, SENTINEL
 from aphelion.core.event_bus import Event, EventBus, Priority
+from aphelion.risk.sentinel.sentinel_v2 import (
+    SentinelV2,
+    CorrelationGuard,
+    LatencyMonitor,
+    CascadeProtection,
+    DynamicSizer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +65,12 @@ class SentinelCore:
         self._l1_triggered: bool = False
         self._current_day: date | None = None
         self._event_bus.subscribe(EventTopic.RISK, self._on_risk_event)
+
+        # v2: Advanced risk sub-systems
+        self._v2 = SentinelV2()
+        self._regime: str = "UNKNOWN"
+        self._current_atr: float = 0.0
+        self._avg_atr: float = 0.0
 
     @property
     def l1_triggered(self) -> bool:
@@ -166,7 +179,7 @@ class SentinelCore:
     def get_total_exposure_pct(self) -> float:
         return sum(position.size_pct for position in self._positions.values())
 
-    def is_trading_allowed(self) -> bool:
+    def is_trading_allowed(self, direction: str = "LONG", strategy: str = "") -> bool:
         if self._l3_triggered:
             return False
         if self._l2_triggered:
@@ -177,6 +190,11 @@ class SentinelCore:
             return False
         if not self._clock.is_market_open():
             return False
+        # v2: Check cascade, latency, correlation
+        allowed, reason = self._v2.is_trade_allowed(direction, strategy)
+        if not allowed:
+            logger.warning("SENTINEL v2 blocked trade: %s", reason)
+            return False
         return True
 
     def get_size_multiplier(self) -> float:
@@ -184,6 +202,39 @@ class SentinelCore:
         if self._l1_triggered:
             return 0.5
         return 1.0
+
+    def compute_position_size(self, base_size_pct: float) -> float:
+        """v2: Compute regime & vol adjusted position size."""
+        l1_mult = self.get_size_multiplier()
+        v2_size = self._v2.compute_size(
+            base_size_pct, self._regime, self._current_atr, self._avg_atr
+        )
+        return v2_size * l1_mult
+
+    # ── v2 Integration Methods ───────────────────────────────────────────
+
+    def record_latency(self, latency_ms: float, operation: str = "") -> None:
+        self._v2.latency_monitor.record(latency_ms, operation)
+
+    def report_module_failure(self, module_name: str, error_msg: str = "") -> bool:
+        return self._v2.cascade_protection.report_failure(module_name, error_msg)
+
+    def register_v2_position(self, position_id: str, direction: str, strategy: str = "") -> None:
+        self._v2.correlation_guard.register_position(position_id, direction, strategy)
+
+    def close_v2_position(self, position_id: str) -> None:
+        self._v2.correlation_guard.remove_position(position_id)
+
+    def set_regime(self, regime: str) -> None:
+        self._regime = regime
+
+    def set_atr(self, current_atr: float, avg_atr: float) -> None:
+        self._current_atr = current_atr
+        self._avg_atr = avg_atr
+
+    @property
+    def v2(self) -> SentinelV2:
+        return self._v2
 
     def get_status(self) -> dict:
         drawdown = 0.0

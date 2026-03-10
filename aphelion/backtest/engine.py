@@ -1,8 +1,8 @@
 """
 APHELION Backtest Engine
 Event-driven bar-by-bar simulation engine. Iterates historical data,
-generates strategy signals, runs SENTINEL validation, simulates order
-execution, and records full results.
+generates strategy signals, runs ARES governance + SENTINEL validation,
+simulates order execution, and records full results.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from aphelion.backtest.order import (
     BacktestTrade, Order, OrderType, OrderSide, OrderStatus,
 )
 from aphelion.backtest.portfolio import Portfolio
-from aphelion.core.config import Timeframe
+from aphelion.core.config import Timeframe, Tier
 from aphelion.core.data_layer import Bar, DataLayer
 from aphelion.core.clock import MarketClock
 from aphelion.features.engine import FeatureEngine
@@ -28,6 +28,18 @@ from aphelion.risk.sentinel.core import SentinelCore
 from aphelion.risk.sentinel.execution.enforcer import ExecutionEnforcer
 from aphelion.risk.sentinel.position_sizer import PositionSizer
 from aphelion.risk.sentinel.validator import TradeProposal, TradeValidator
+
+# Optional ARES import — available when ares package is present
+try:
+    from aphelion.ares.coordinator import (
+        AresCoordinator,
+        AggregatedSignal,
+        SignalSource,
+        StrategyVote,
+    )
+    _HAS_ARES = True
+except ImportError:
+    _HAS_ARES = False
 
 logger = logging.getLogger(__name__)
 
@@ -76,12 +88,14 @@ class BacktestEngine:
         config: BacktestConfig,
         sentinel_stack: dict,
         data_layer: DataLayer,
+        ares: Optional[object] = None,
     ):
         """
         Args:
             config: Backtest configuration.
             sentinel_stack: Dict with keys: core, validator, cb, enforcer, sizer.
             data_layer: DataLayer instance for feature computation.
+            ares: Optional AresCoordinator for governance validation.
         """
         self._config = config
 
@@ -93,6 +107,7 @@ class BacktestEngine:
         self._sizer: PositionSizer = sentinel_stack["sizer"]
         self._clock: MarketClock = sentinel_stack["clock"]  # FIXED: store clock for simulated time
         self._data_layer = data_layer
+        self._ares = ares  # Optional AresCoordinator
 
         self._strategy_callback: Optional[Callable] = None
         self._pending_orders: list[Order] = []
@@ -204,6 +219,33 @@ class BacktestEngine:
             if i >= self._config.warmup_bars and self._strategy_callback is not None:
                 try:
                     new_orders = self._strategy_callback(bar, features, self._portfolio)
+
+                    # ── ARES governance check ──────────────────────────
+                    if new_orders and self._ares is not None and _HAS_ARES:
+                        order = new_orders[0]
+                        direction = 1 if order.side == OrderSide.BUY else -1
+                        confidence = 0.70
+                        # Recover confidence from strategy's last signal
+                        last_sig = getattr(self._strategy_callback, "last_signal", None)
+                        if last_sig is not None and hasattr(last_sig, "confidence"):
+                            confidence = last_sig.confidence
+
+                        vote = StrategyVote(
+                            source=SignalSource.HYDRA,
+                            direction=direction,
+                            confidence=confidence,
+                            tier=Tier.ORACLE,
+                        )
+                        self._ares.set_sentinel_veto(self._sentinel_core.l3_triggered)
+                        if bar_ts:
+                            session = self._clock.current_session(bar_ts)
+                            self._ares.set_session(session.name)
+
+                        aggregated = self._ares.aggregate([vote])
+                        if not aggregated.is_actionable:
+                            new_orders = []
+                            self._ares_veto_count += 1
+
                     if new_orders:
                         for order in new_orders:
                             order = self._apply_execution_enforcement(order, bar)
@@ -266,11 +308,15 @@ class BacktestEngine:
         self._pending_orders = []
         self._bar_index = 0
         self._enforcer_rejections = 0  # FIXED: track enforcer-level rejections
+        self._ares_veto_count = 0
         self._results = None
         if self._config.enable_feature_engine:
             self._feature_engine = FeatureEngine(self._data_layer)
         else:
             self._feature_engine = None
+        # Reset ARES state between runs
+        if self._ares is not None and hasattr(self._ares, "reset"):
+            self._ares.reset()
 
     def _reset_sentinel_runtime(self) -> None:
         """

@@ -62,10 +62,10 @@ class TestRegistry:
         self.registry.register("OLYMPUS")
         self.registry.register("SENTINEL")
         self.registry.register("HYDRA")
-        council = self.registry.get_components_by_tier(Tier.COUNCIL)
-        assert "OLYMPUS" in council
-        assert "SENTINEL" in council
-        assert "HYDRA" not in council
+        general = self.registry.get_components_by_tier(Tier.GENERAL)
+        assert "OLYMPUS" in general
+        assert "SENTINEL" in general
+        assert "HYDRA" not in general
 
     def test_system_health_empty(self):
         health = self.registry.system_health()

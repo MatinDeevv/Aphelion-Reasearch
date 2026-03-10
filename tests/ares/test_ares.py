@@ -35,10 +35,10 @@ class TestAresCoordinator:
         coord._bars_since_decision = 999  # no cooldown
         return coord
 
-    def _long_vote(self, source=SignalSource.HYDRA, conf=0.8, tier=Tier.MINISTER):
+    def _long_vote(self, source=SignalSource.HYDRA, conf=0.8, tier=Tier.ORACLE):
         return StrategyVote(source=source, direction=1, confidence=conf, tier=tier)
 
-    def _short_vote(self, source=SignalSource.PROMETHEUS, conf=0.7, tier=Tier.MINISTER):
+    def _short_vote(self, source=SignalSource.PROMETHEUS, conf=0.7, tier=Tier.COMMANDER):
         return StrategyVote(source=source, direction=-1, confidence=conf, tier=tier)
 
     def test_unanimous_long(self):

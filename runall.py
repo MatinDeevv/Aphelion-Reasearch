@@ -28,6 +28,19 @@ from aphelion.paper.runner import PaperRunner, PaperRunnerConfig
 from aphelion.paper.session import PaperSessionConfig
 from aphelion.tui.app import AphelionTUI, TUIConfig
 
+# Optional governance imports
+try:
+    from aphelion.ares.coordinator import AresCoordinator, AresConfig
+    _HAS_ARES = True
+except ImportError:
+    _HAS_ARES = False
+
+try:
+    from aphelion.governance.council.sola import SOLA
+    _HAS_SOLA = True
+except ImportError:
+    _HAS_SOLA = False
+
 
 def setup_logging(verbose: bool = False) -> None:
     level = logging.DEBUG if verbose else logging.INFO
@@ -119,6 +132,25 @@ async def main() -> None:
         training_proc = _start_training_subprocess(args.train_full)
         logger.info("Background training started (PID %s). Logs: logs/train_hydra_live.log", training_proc.pid)
 
+    # ── Build ARES governance pipeline ──────────────────────────────────
+    ares = None
+    if _HAS_ARES:
+        sola = None
+        if _HAS_SOLA:
+            try:
+                sola = SOLA()
+                logger.info("SOLA sovereign intelligence layer initialized")
+            except Exception as exc:
+                logger.warning("SOLA init failed (non-fatal): %s", exc)
+
+        ares = AresCoordinator(config=AresConfig(), sola=sola)
+        logger.info(
+            "ARES coordinator initialized — SOLA=%s",
+            "active" if sola is not None else "disabled",
+        )
+    else:
+        logger.warning("ARES not available — session will run without governance layer")
+
     config = PaperRunnerConfig(
         feed_mode=FeedMode.SIMULATED,
         session_config=PaperSessionConfig(
@@ -132,6 +164,7 @@ async def main() -> None:
             symbol=args.symbol,
         ),
         enable_tui=True,
+        ares=ares,
     )
 
     runner = PaperRunner(config)

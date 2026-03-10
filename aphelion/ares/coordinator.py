@@ -6,11 +6,15 @@ Money Makers) and resolves conflicts using weighted voting, regime awareness,
 and optional LLM reasoning.
 
 The coordinator implements the spec's tiered governance voting model:
-  - Council-tier modules (SENTINEL, ARES) get 100 votes
-  - Minister-tier (HYDRA, PROMETHEUS) get 40 votes
-  - Commander-tier (strategies) get 10 votes
+  - Sovereign-tier: SOLA — ∞ votes (can veto any trade)
+  - General-tier: OLYMPUS — 20 votes
+  - Oracle-tier: HYDRA — 15 votes
+  - Commander-tier: PROMETHEUS, FLOW, MACRO — 10 votes
+  - Lieutenant-tier: NEMESIS, FORGE, SHADOW — 5 votes
+  - Sergeant-tier: KRONOS, ECHO, MERIDIAN — 2 votes
+  - Private-tier: Individual sub-models — 1 vote
 
-Final decision respects SENTINEL veto power.
+Final decision respects SENTINEL risk limits and SOLA sovereign veto.
 """
 
 from __future__ import annotations
@@ -27,6 +31,13 @@ from aphelion.core.config import SENTINEL, Tier, TIER_VOTE_WEIGHTS
 
 logger = logging.getLogger(__name__)
 
+# Optional SOLA import — available when governance package is present
+try:
+    from aphelion.governance.council.sola import SOLA, VetoDecision
+    _HAS_SOLA = True
+except ImportError:
+    _HAS_SOLA = False
+
 
 class SignalSource(Enum):
     """Source of a trading signal."""
@@ -37,6 +48,45 @@ class SignalSource(Enum):
     APEX = "APEX"
     WRAITH = "WRAITH"
     MANUAL = "MANUAL"
+    # v2 additions — intelligence modules
+    KRONOS = "KRONOS"
+    ECHO = "ECHO"
+    FORGE = "FORGE"
+    SHADOW = "SHADOW"
+    # v2 additions — flow / macro / nemesis
+    SPECTER = "SPECTER"
+    PHANTOM = "PHANTOM"
+    ATLAS = "ATLAS"
+    HERALD = "HERALD"
+    ORACLE_MACRO = "ORACLE_MACRO"
+    NEXUS = "NEXUS"
+    ARGUS = "ARGUS"
+    # v2 additions — nemesis / governance
+    CHRONOS = "CHRONOS"
+    LEVIATHAN = "LEVIATHAN"
+    PANDORA = "PANDORA"
+    VERDICT = "VERDICT"
+    # v2 additions — evolution
+    CIPHER = "CIPHER"
+    MERIDIAN = "MERIDIAN"
+    ZEUS = "ZEUS"
+    # v2 additions — strategy modules
+    HALFTREND = "HALFTREND"
+    OMEGA = "OMEGA"
+    SIGNAL_TOWER = "SIGNAL_TOWER"
+
+
+# Session-aware vote weight modifiers (spec v2: session context adjusts importance)
+SESSION_MODIFIERS: dict[str, dict[str, float]] = {
+    "LONDON": {SignalSource.HYDRA.value: 1.0, "default": 1.0},
+    "NEW_YORK": {SignalSource.HYDRA.value: 1.1, "default": 1.0},
+    "OVERLAP": {SignalSource.HYDRA.value: 1.2, "default": 1.15},
+    "ASIA": {SignalSource.HYDRA.value: 0.8, "default": 0.85},
+    "OFF_HOURS": {"default": 0.5},
+}
+
+# Default temporal staleness half-life in bars
+VOTE_STALENESS_HALFLIFE: int = 5
 
 
 @dataclass
@@ -48,6 +98,7 @@ class StrategyVote:
     tier: Tier = Tier.COMMANDER
     reasoning: str = ""
     metadata: dict = field(default_factory=dict)
+    age_bars: int = 0            # v2: how many bars old this vote is
 
     @property
     def weighted_score(self) -> float:
@@ -56,6 +107,18 @@ class StrategyVote:
         if weight == float('inf'):
             weight = 1000  # Cap for arithmetic
         return self.direction * self.confidence * weight
+
+    @property
+    def staleness_multiplier(self) -> float:
+        """Exponential decay based on vote age (half-life = VOTE_STALENESS_HALFLIFE bars)."""
+        if self.age_bars <= 0:
+            return 1.0
+        return 0.5 ** (self.age_bars / VOTE_STALENESS_HALFLIFE)
+
+    @property
+    def effective_score(self) -> float:
+        """Weighted score with staleness decay applied."""
+        return self.weighted_score * self.staleness_multiplier
 
 
 @dataclass
@@ -109,9 +172,11 @@ class AresCoordinator:
         self,
         config: Optional[AresConfig] = None,
         reasoner: Optional[object] = None,   # AresReasoner (optional)
+        sola: Optional[object] = None,       # SOLA sovereign veto layer
     ):
         self._config = config or AresConfig()
         self._reasoner = reasoner
+        self._sola = sola  # Sovereign intelligence layer
         self._active_sources: set[SignalSource] = {
             SignalSource.HYDRA,
             SignalSource.PROMETHEUS,
@@ -121,6 +186,8 @@ class AresCoordinator:
         self._decision_history: list[AggregatedSignal] = []
         self._regime: str = "UNKNOWN"
         self._sentinel_veto: bool = False
+        self._session: str = "UNKNOWN"          # v2: current session name
+        self._conflict_resolver: Optional[Callable] = None  # v2: custom resolver
 
     # ── Signal Collection ────────────────────────────────────────────────────
 
@@ -152,14 +219,22 @@ class AresCoordinator:
                                    confidence=0.0, agreement_ratio=0.0,
                                    reasoning="No active votes")
 
-        # 1. Weighted consensus
-        total_weight = sum(abs(v.weighted_score) for v in active_votes)
+        # 1. Weighted consensus (v2: use effective_score with staleness)
+        # Apply session modifier to each vote's effective score
+        session_mods = SESSION_MODIFIERS.get(self._session, {})
+        effective_scores = []
+        for v in active_votes:
+            base = v.effective_score
+            mod = session_mods.get(v.source.value, session_mods.get("default", 1.0))
+            effective_scores.append(base * mod)
+
+        total_weight = sum(abs(s) for s in effective_scores)
         if total_weight < 1e-10:
             return AggregatedSignal(direction=0, consensus_score=0.0,
                                    confidence=0.0, agreement_ratio=0.0,
                                    votes=active_votes, reasoning="Zero weight")
 
-        weighted_sum = sum(v.weighted_score for v in active_votes)
+        weighted_sum = sum(effective_scores)
         consensus = weighted_sum / total_weight  # [-1, 1]
 
         # 2. Direction
@@ -210,7 +285,23 @@ class AresCoordinator:
             veto_reason = "SENTINEL veto active"
             reasoning_parts.append(veto_reason)
 
-        # 8. Minimum thresholds
+        # 8. SOLA sovereign veto check (∞ votes — overrides everything)
+        if not vetoed and self._sola is not None and direction != 0:
+            try:
+                sola_decision = self._sola.should_veto(
+                    trade_direction=direction,
+                    confidence=confidence,
+                    module_source="ARES",
+                )
+                if sola_decision.vetoed:
+                    vetoed = True
+                    veto_reason = f"SOLA veto: {sola_decision.explanation}"
+                    reasoning_parts.append(veto_reason)
+                    logger.info("SOLA sovereign veto: %s", sola_decision.explanation)
+            except Exception:
+                logger.warning("SOLA veto check failed", exc_info=True)
+
+        # 9. Minimum thresholds
         if agreement_ratio < self._config.min_agreement_ratio:
             direction = 0
             reasoning_parts.append(f"Agreement {agreement_ratio:.0%} below threshold")
@@ -247,6 +338,34 @@ class AresCoordinator:
         """Update the current market regime."""
         self._regime = regime
 
+    def set_session(self, session: str) -> None:
+        """Update the current market session for session-aware voting."""
+        self._session = session
+
+    def set_conflict_resolver(self, resolver: Callable) -> None:
+        """Register a custom conflict resolver callback."""
+        self._conflict_resolver = resolver
+
+    def resolve_conflict(self, long_votes: list[StrategyVote],
+                         short_votes: list[StrategyVote]) -> int:
+        """Resolve conflict when votes are split between long and short.
+        Returns: direction (-1, 0, or 1).
+        """
+        if self._conflict_resolver is not None:
+            return self._conflict_resolver(long_votes, short_votes)
+        # Default: highest tier wins; ties → flat
+        long_max_tier = max((TIER_VOTE_WEIGHTS.get(v.tier, 1) for v in long_votes), default=0)
+        short_max_tier = max((TIER_VOTE_WEIGHTS.get(v.tier, 1) for v in short_votes), default=0)
+        if long_max_tier == float('inf'):
+            long_max_tier = 1000
+        if short_max_tier == float('inf'):
+            short_max_tier = 1000
+        if long_max_tier > short_max_tier:
+            return 1
+        elif short_max_tier > long_max_tier:
+            return -1
+        return 0
+
     # ── Source Management ────────────────────────────────────────────────────
 
     def activate_source(self, source: SignalSource) -> None:
@@ -264,6 +383,17 @@ class AresCoordinator:
     def set_sentinel_veto(self, veto: bool) -> None:
         """SENTINEL can veto all trading via this flag."""
         self._sentinel_veto = veto
+
+    # ── SOLA Interface ───────────────────────────────────────────────────────
+
+    def set_sola(self, sola: object) -> None:
+        """Wire the SOLA sovereign intelligence layer for trade veto."""
+        self._sola = sola
+
+    @property
+    def sola(self) -> Optional[object]:
+        """Current SOLA instance (or None)."""
+        return self._sola
 
     # ── Analytics ────────────────────────────────────────────────────────────
 

@@ -78,6 +78,9 @@ class PaperRunnerConfig:
     # System stats polling
     system_stats_interval_s: float = 5.0
 
+    # ARES governance coordinator (optional — wired by runall.py)
+    ares: Optional[object] = None
+
 
 # ── Runner ───────────────────────────────────────────────────────────────────
 
@@ -144,7 +147,11 @@ class PaperRunner:
         feed = await self._create_feed()
 
         # 4. Create and run paper session
-        self._session = PaperSession(self._config.session_config, feed)
+        self._session = PaperSession(
+            self._config.session_config,
+            feed,
+            ares=self._config.ares,
+        )
 
         # Start system stats poller
         if self._config.enable_tui:

@@ -27,6 +27,8 @@ try:
     from aphelion.intelligence.hydra.lstm import HydraLSTM, LSTMConfig
     from aphelion.intelligence.hydra.cnn import HydraCNN, CNNConfig
     from aphelion.intelligence.hydra.moe import HydraMoE, MoEConfig
+    from aphelion.intelligence.hydra.tcn import HydraTCN, TCNConfig
+    from aphelion.intelligence.hydra.transformer import HydraTransformer, TransformerConfig
     from aphelion.intelligence.hydra.ensemble import HydraGate, EnsembleConfig
 
     from aphelion.intelligence.hydra.dataset import (
@@ -50,6 +52,19 @@ try:
         HydraStrategy,
         StrategyConfig,
     )
+    from aphelion.intelligence.hydra.calibration import (
+        IsotonicCalibrator,
+        DisagreementDetector,
+        DynamicEnsembleWeights,
+        CalibrationResult,
+    )
+    from aphelion.intelligence.hydra.xgb_model import (
+        HydraXGBoost,
+        HydraRandomForest,
+        HydraTreeEnsemble,
+        TreeModelConfig,
+        TreePrediction,
+    )
 
     HAS_TORCH = True
 
@@ -59,7 +74,15 @@ try:
         "HydraLSTM", "LSTMConfig",
         "HydraCNN", "CNNConfig",
         "HydraMoE", "MoEConfig",
+        "HydraTCN", "TCNConfig",
+        "HydraTransformer", "TransformerConfig",
         "HydraGate", "EnsembleConfig",
+        # Tree models
+        "HydraXGBoost", "HydraRandomForest", "HydraTreeEnsemble",
+        "TreeModelConfig", "TreePrediction",
+        # Calibration & Disagreement
+        "IsotonicCalibrator", "DisagreementDetector",
+        "DynamicEnsembleWeights", "CalibrationResult",
         # Data
         "HydraDataset", "DatasetConfig",
         "create_dataloaders", "build_dataset_from_feature_dicts",

@@ -58,6 +58,12 @@ class HydraStrategy:
         self._config = config or StrategyConfig()
         self._bars_since_trade = 999  # Allow first trade immediately
         self._trade_counter = 0
+        self._last_signal: Optional[HydraSignal] = None
+
+    @property
+    def last_signal(self) -> Optional[HydraSignal]:
+        """Last raw HydraSignal from the most recent __call__."""
+        return self._last_signal
 
     def __call__(
         self,
@@ -80,6 +86,7 @@ class HydraStrategy:
 
         # Run HYDRA inference
         signal = self._inference.process_bar(features)
+        self._last_signal = signal
 
         if signal is None:
             return []
@@ -191,4 +198,5 @@ class HydraStrategy:
         """Reset strategy state for new backtest run."""
         self._bars_since_trade = 999
         self._trade_counter = 0
+        self._last_signal = None
         self._inference.reset()

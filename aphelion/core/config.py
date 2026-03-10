@@ -159,19 +159,23 @@ class ComponentStatus(Enum):
 
 
 class Tier(Enum):
-    SOVEREIGN = 1       # User — infinite votes
-    COUNCIL = 2         # OLYMPUS, SENTINEL, ARES — 100 votes each
-    MINISTER = 3        # 7 modules — 40 votes each
-    COMMANDER = 4       # 12 modules — 10 votes each
-    OPERATOR = 5        # 100+ sub-modules — 1 vote each
+    SOVEREIGN = 1       # SOLA — infinite votes
+    GENERAL = 2         # OLYMPUS — 20 votes
+    ORACLE = 3          # HYDRA Ensemble — 15 votes
+    COMMANDER = 4       # PROMETHEUS, FLOW, MACRO, ATLAS LIVE — 10 votes
+    LIEUTENANT = 5      # NEMESIS, FORGE, SHADOW — 5 votes
+    SERGEANT = 6        # KRONOS, ECHO, MERIDIAN — 2 votes
+    PRIVATE = 7         # Individual sub-models within HYDRA — 1 vote
 
 
 TIER_VOTE_WEIGHTS: Final = {
     Tier.SOVEREIGN: float('inf'),
-    Tier.COUNCIL: 100,
-    Tier.MINISTER: 40,
+    Tier.GENERAL: 20,
+    Tier.ORACLE: 15,
     Tier.COMMANDER: 10,
-    Tier.OPERATOR: 1,
+    Tier.LIEUTENANT: 5,
+    Tier.SERGEANT: 2,
+    Tier.PRIVATE: 1,
 }
 
 
@@ -185,34 +189,44 @@ class ModuleInfo:
 
 
 MODULES: Final = {
-    # Tier 2 — Council
-    "OLYMPUS":    ModuleInfo("OLYMPUS", Tier.COUNCIL, "System Governor & Auto-Tuner"),
-    "SENTINEL":   ModuleInfo("SENTINEL", Tier.COUNCIL, "Supreme Risk Authority"),
-    "ARES":       ModuleInfo("ARES", Tier.COUNCIL, "LLM Brain"),
+    # Tier 2 — General
+    "OLYMPUS":    ModuleInfo("OLYMPUS", Tier.GENERAL, "System Governor & Auto-Tuner"),
+    "SENTINEL":   ModuleInfo("SENTINEL", Tier.GENERAL, "Supreme Risk Authority"),
+    "ARES":       ModuleInfo("ARES", Tier.GENERAL, "LLM Brain"),
 
-    # Tier 3 — Ministers
-    "HYDRA":      ModuleInfo("HYDRA", Tier.MINISTER, "Neural Intelligence Core"),
-    "PROMETHEUS": ModuleInfo("PROMETHEUS", Tier.MINISTER, "Evolution Engine"),
-    "PHANTOM":    ModuleInfo("PHANTOM", Tier.MINISTER, "Institutional Flow Detection"),
-    "NEMESIS":    ModuleInfo("NEMESIS", Tier.MINISTER, "War Simulator"),
-    "FORGE":      ModuleInfo("FORGE", Tier.MINISTER, "Online Learning"),
-    "ATLAS":      ModuleInfo("ATLAS", Tier.MINISTER, "Macro Intelligence"),
-    "DATA":       ModuleInfo("DATA", Tier.MINISTER, "Data Layer & Features"),
+    # Tier 3 — Oracle
+    "HYDRA":      ModuleInfo("HYDRA", Tier.ORACLE, "Neural Intelligence Core"),
 
-    # Tier 4 — Commanders
-    "BACKTEST":   ModuleInfo("BACKTEST", Tier.COMMANDER, "Backtesting Engine & Monte Carlo"),
-    "VENOM":      ModuleInfo("VENOM", Tier.COMMANDER, "Statistical Arbitrage"),
-    "REAPER":     ModuleInfo("REAPER", Tier.COMMANDER, "Liquidity Vacuum"),
-    "APEX":       ModuleInfo("APEX", Tier.COMMANDER, "Volatility Breakout"),
-    "WRAITH":     ModuleInfo("WRAITH", Tier.COMMANDER, "News Reversion"),
-    "SHADOW":     ModuleInfo("SHADOW", Tier.COMMANDER, "Personal Trading DNA"),
-    "KRONOS":     ModuleInfo("KRONOS", Tier.COMMANDER, "TimesFM Foundation"),
-    "ECHO":       ModuleInfo("ECHO", Tier.COMMANDER, "Historical Analogs"),
-    "CASSANDRA":  ModuleInfo("CASSANDRA", Tier.COMMANDER, "24H Direction Predictor"),
-    "ORACLE":     ModuleInfo("ORACLE", Tier.COMMANDER, "Macro Regime Decoder"),
-    "TITAN":      ModuleInfo("TITAN", Tier.COMMANDER, "Portfolio Allocation"),
-    "GHOST":      ModuleInfo("GHOST", Tier.COMMANDER, "Stealth Execution"),
-    "FUND":       ModuleInfo("FUND", Tier.COMMANDER, "Performance Reporting"),
+    # Tier 4 — Commander
+    "PROMETHEUS": ModuleInfo("PROMETHEUS", Tier.COMMANDER, "Evolution Engine"),
+    "PHANTOM":    ModuleInfo("PHANTOM", Tier.COMMANDER, "Institutional Flow Detection"),
+    "ATLAS":      ModuleInfo("ATLAS", Tier.COMMANDER, "Macro Intelligence"),
+    "DATA":       ModuleInfo("DATA", Tier.COMMANDER, "Data Layer & Features"),
+    "SIGNAL_TOWER": ModuleInfo("SIGNAL_TOWER", Tier.COMMANDER, "Technical Analysis Voters"),
+    "FLOW":       ModuleInfo("FLOW", Tier.COMMANDER, "Liquidity & Microstructure"),
+    "MACRO":      ModuleInfo("MACRO", Tier.COMMANDER, "Market Regime Intelligence"),
+
+    # Tier 5 — Lieutenant
+    "NEMESIS":    ModuleInfo("NEMESIS", Tier.LIEUTENANT, "War Simulator"),
+    "FORGE":      ModuleInfo("FORGE", Tier.LIEUTENANT, "Online Learning"),
+    "SHADOW":     ModuleInfo("SHADOW", Tier.LIEUTENANT, "Personal Trading DNA"),
+
+    # Tier 6 — Sergeant
+    "KRONOS":     ModuleInfo("KRONOS", Tier.SERGEANT, "Trade Journal & Analytics"),
+    "ECHO":       ModuleInfo("ECHO", Tier.SERGEANT, "Historical Analogs"),
+    "MERIDIAN":   ModuleInfo("MERIDIAN", Tier.SERGEANT, "Multi-Timeframe Weights"),
+
+    # Tier 7 — Private
+    "BACKTEST":   ModuleInfo("BACKTEST", Tier.PRIVATE, "Backtesting Engine & Monte Carlo"),
+    "VENOM":      ModuleInfo("VENOM", Tier.PRIVATE, "Statistical Arbitrage"),
+    "REAPER":     ModuleInfo("REAPER", Tier.PRIVATE, "Liquidity Vacuum"),
+    "APEX":       ModuleInfo("APEX", Tier.PRIVATE, "Volatility Breakout"),
+    "WRAITH":     ModuleInfo("WRAITH", Tier.PRIVATE, "News Reversion"),
+    "CASSANDRA":  ModuleInfo("CASSANDRA", Tier.PRIVATE, "24H Direction Predictor"),
+    "ORACLE":     ModuleInfo("ORACLE", Tier.PRIVATE, "Macro Regime Decoder"),
+    "TITAN":      ModuleInfo("TITAN", Tier.PRIVATE, "Quality Gate"),
+    "GHOST":      ModuleInfo("GHOST", Tier.PRIVATE, "Stealth Execution"),
+    "FUND":       ModuleInfo("FUND", Tier.PRIVATE, "Performance Reporting"),
 }
 
 

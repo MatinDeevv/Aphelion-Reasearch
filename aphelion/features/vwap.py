@@ -29,6 +29,7 @@ class VWAPCalculator:
         self._session_cum_tp_vol = 0.0
         self._session_cum_vol = 0.0
         self._session_cum_tp2_vol = 0.0
+        self._session_open_date = None  # Track session date for auto-reset
         # Anchored VWAP
         self._anchor_cum_tp_vol = 0.0
         self._anchor_cum_vol = 0.0
@@ -40,8 +41,24 @@ class VWAPCalculator:
         self._state = VWAPState()
 
     def update(self, high: float, low: float, close: float,
-               volume: float) -> VWAPState:
-        """Update VWAP with new bar data."""
+               volume: float, timestamp=None) -> VWAPState:
+        """Update VWAP with new bar data.
+        
+        Args:
+            timestamp: Optional datetime for auto session reset on new trading day (00:00 UTC).
+        """
+        # BUGFIX: Auto-reset session VWAP on new trading day
+        if timestamp is not None:
+            from datetime import datetime
+            if hasattr(timestamp, 'date'):
+                session_date = timestamp.date()
+            else:
+                session_date = datetime.utcfromtimestamp(timestamp).date() if isinstance(timestamp, (int, float)) else None
+            
+            if session_date and (self._session_open_date is None or session_date != self._session_open_date):
+                self._session_open_date = session_date
+                self.reset_session()
+
         typical_price = (high + low + close) / 3.0
         tp_vol = typical_price * volume
         tp2_vol = (typical_price ** 2) * volume

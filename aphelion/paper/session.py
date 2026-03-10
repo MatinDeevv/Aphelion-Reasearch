@@ -1,7 +1,7 @@
 """
 APHELION Paper Trading Session Orchestrator
 Async main loop that wires:
-  DataFeed → FeatureEngine → HYDRA → Strategy → SENTINEL → PaperExecutor → Ledger
+  DataFeed → FeatureEngine → HYDRA → ARES → SOLA → SENTINEL → PaperExecutor → Ledger
 
 Supports three data-feed modes: LIVE (MT5), REPLAY, and SIMULATED.
 """
@@ -18,7 +18,7 @@ from typing import Optional
 from aphelion.backtest.order import Order, OrderType
 from aphelion.backtest.portfolio import Portfolio
 from aphelion.core.clock import MarketClock
-from aphelion.core.config import SENTINEL, Timeframe
+from aphelion.core.config import SENTINEL, Tier, Timeframe
 from aphelion.core.data_layer import Bar, DataLayer
 from aphelion.core.event_bus import EventBus
 from aphelion.features.engine import FeatureEngine
@@ -33,6 +33,19 @@ from aphelion.risk.sentinel.execution.paper import PaperConfig, PaperExecutor
 from aphelion.risk.sentinel.monitor import SentinelMonitor
 from aphelion.risk.sentinel.position_sizer import PositionSizer
 from aphelion.risk.sentinel.validator import TradeValidator
+
+# Optional ARES import — available when ares package is present
+try:
+    from aphelion.ares.coordinator import (
+        AresCoordinator,
+        AresConfig,
+        AggregatedSignal,
+        SignalSource,
+        StrategyVote,
+    )
+    _HAS_ARES = True
+except ImportError:
+    _HAS_ARES = False
 
 logger = logging.getLogger(__name__)
 
@@ -87,9 +100,11 @@ class PaperSession:
         self,
         config: PaperSessionConfig,
         feed: DataFeed,
+        ares: Optional[object] = None,
     ):
         self._config = config
         self._feed = feed
+        self._ares = ares  # AresCoordinator (optional governance layer)
 
         # ── Wire the full SENTINEL stack ──────────────────────────────────
         self._event_bus = EventBus()
@@ -129,6 +144,7 @@ class PaperSession:
         self._bar_count: int = 0
         self._error_count: int = 0
         self._running: bool = False
+        self._ares_veto_count: int = 0
 
     # ── Initialization ────────────────────────────────────────────────────
 
@@ -217,6 +233,8 @@ class PaperSession:
             "trades": len(self._portfolio.get_closed_trades()),
             "fills": self._paper_executor.stats["fill_count"],
             "rejections": self._paper_executor.stats["rejection_count"],
+            "ares_vetoes": self._ares_veto_count,
+            "ares_decisions": self._ares.decision_count if self._ares and _HAS_ARES else 0,
         })
 
         logger.info(
@@ -303,6 +321,48 @@ class PaperSession:
         if self._bar_count >= self._config.warmup_bars and self._strategy is not None:
             try:
                 orders = self._strategy(bar, features, self._portfolio)
+
+                # ── ARES governance check ──────────────────────────────
+                if orders and self._ares is not None and _HAS_ARES:
+                    # Build a StrategyVote from the HYDRA signal/order
+                    order = orders[0]
+                    direction = 1 if order.side.value == "BUY" else -1
+                    # Recover confidence from last HYDRA signal if available
+                    confidence = 0.70
+                    last_sig = getattr(self._strategy, "last_signal", None)
+                    if last_sig is not None and hasattr(last_sig, "confidence"):
+                        confidence = last_sig.confidence
+
+                    vote = StrategyVote(
+                        source=SignalSource.HYDRA,
+                        direction=direction,
+                        confidence=confidence,
+                        tier=Tier.ORACLE,
+                        reasoning=f"HYDRA signal conf={confidence:.2f}",
+                    )
+
+                    # Wire SENTINEL state into ARES
+                    self._ares.set_sentinel_veto(self._sentinel_core.l3_triggered)
+
+                    # Wire session context
+                    if bar_ts:
+                        session = self._clock.current_session(bar_ts)
+                        self._ares.set_session(session.name)
+
+                    aggregated = self._ares.aggregate([vote])
+
+                    if not aggregated.is_actionable:
+                        orders = []
+                        self._ares_veto_count += 1
+                        self._ledger.log_event("ARES_REJECT", {
+                            "direction": direction,
+                            "confidence": confidence,
+                            "reasoning": aggregated.reasoning,
+                            "vetoed": aggregated.vetoed,
+                            "veto_reason": aggregated.veto_reason,
+                            "bar_count": self._bar_count,
+                        })
+
                 if orders:
                     for order in orders:
                         self._submit_order(order, bar)

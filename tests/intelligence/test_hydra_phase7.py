@@ -354,14 +354,14 @@ class TestFullPipelinePhase7:
         assert 0 <= sig.horizon_agreement <= 1
 
     def test_gate_weights_cover_all_models(self):
-        """Gate attention explicitly covers TFT, LSTM, CNN, MoE."""
+        """Gate attention explicitly covers TFT, LSTM, CNN, MoE, TCN, Transformer."""
         model = HydraGate(_small_config())
         model.eval()
         cont, cat = _make_batch(2, 32)
         with torch.no_grad():
             out = model(cont, cat)
         gw = out["gate_attention_weights"]
-        assert gw.shape[-1] == 4  # TFT, LSTM, CNN, MoE
+        assert gw.shape[-1] == 6  # TFT, LSTM, CNN, MoE, TCN, Transformer
 
     def test_moe_routing_captures_all_experts(self):
         """MoE routing weights span all 4 experts."""

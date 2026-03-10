@@ -1,11 +1,16 @@
 """
 APHELION Feature Engine
-Master pipeline orchestrating all 60+ feature computations.
+Master pipeline orchestrating all 80+ feature computations.
+Includes advanced algorithms: Hurst exponent, wavelet denoising,
+Fisher Transform, Chaikin Money Flow, Williams %R, Keltner Channels,
+fractal dimension, and information-theoretic measures.
 """
 
 import numpy as np
 import pandas as pd
 from typing import Optional
+from scipy import signal as sp_signal
+from scipy.stats import entropy as sp_entropy
 
 from aphelion.core.config import Timeframe, TIMEFRAMES
 from aphelion.core.clock import MarketClock
@@ -17,6 +22,8 @@ from aphelion.features.vwap import VWAPCalculator
 from aphelion.features.sessions import SessionFeatures
 from aphelion.features.mtf import MTFAlignmentEngine
 from aphelion.features.cointegration import CointegrationEngine
+from aphelion.features.halftrend import HalfTrendCalculator
+from aphelion.features.registry import get_registry, FeatureRecord
 
 
 class FeatureEngine:
@@ -37,6 +44,8 @@ class FeatureEngine:
         self._sessions = SessionFeatures(self._clock)
         self._mtf = MTFAlignmentEngine()
         self._cointegration = CointegrationEngine()
+        self._halftrend = HalfTrendCalculator()
+        self._registry = get_registry()
 
         # Technical indicator caches
         self._atr_cache: dict[Timeframe, float] = {}
@@ -45,8 +54,22 @@ class FeatureEngine:
         # External data for cointegration (populated by ATLAS/DATA)
         self._external_prices: dict[str, np.ndarray] = {}
 
+        # v2: tick velocity tracking
+        self._last_tick_ts: float = 0.0
+        self._tick_intervals: list[float] = []
+
     def on_tick(self, tick: Tick) -> dict:
         """Process a raw tick. Returns microstructure features."""
+        # v2: tick velocity tracking
+        now_ts = tick.timestamp.timestamp() if hasattr(tick.timestamp, 'timestamp') else float(tick.timestamp)
+        if self._last_tick_ts > 0:
+            interval = now_ts - self._last_tick_ts
+            if interval > 0:
+                self._tick_intervals.append(interval)
+                if len(self._tick_intervals) > 200:
+                    self._tick_intervals = self._tick_intervals[-200:]
+        self._last_tick_ts = now_ts
+
         return self._micro.update(
             timestamp=tick.timestamp,
             bid=tick.bid,
@@ -107,6 +130,29 @@ class FeatureEngine:
             coint_features = self._cointegration.compute_all(self._external_prices)
             features["any_cointegrated"] = coint_features["any_cointegrated"]
             features["max_spread_zscore"] = coint_features["max_spread_zscore"]
+
+        # 9. HalfTrend indicator
+        if len(df) >= 101:
+            ht_state = self._halftrend.compute(
+                df["high"].values, df["low"].values, df["close"].values
+            )
+            features.update(self._halftrend.to_dict(ht_state))
+
+        # 10. Tick velocity (ticks per second)
+        if self._tick_intervals:
+            avg_interval = np.mean(self._tick_intervals[-50:])
+            features["tick_velocity"] = 1.0 / avg_interval if avg_interval > 0 else 0.0
+        else:
+            features["tick_velocity"] = 0.0
+
+        # 11. Efficiency ratio (Kaufman) — directional movement / total movement
+        _closes = df["close"].values
+        if len(_closes) >= 20:
+            direction_move = abs(_closes[-1] - _closes[-20])
+            total_move = np.sum(np.abs(np.diff(_closes[-20:])))
+            features["efficiency_ratio"] = direction_move / total_move if total_move > 0 else 0.0
+        else:
+            features["efficiency_ratio"] = 0.0
 
         # Add metadata
         features["timeframe"] = tf.value
@@ -201,6 +247,50 @@ class FeatureEngine:
         # Rate of Change (10-period)
         if len(closes) >= 11:
             features["roc_10"] = ((closes[-1] - closes[-11]) / closes[-11]) * 100.0
+
+        # ── Advanced Indicators (v3) ─────────────────────────────────────
+
+        # Hurst exponent — trend vs mean-reversion detection
+        if len(closes) >= 100:
+            features["hurst_exponent"] = self._compute_hurst(closes[-256:] if len(closes) >= 256 else closes)
+
+        # Keltner Channels (20-period EMA, 1.5 ATR)
+        if len(closes) >= 20 and "atr" in features:
+            kc = self._compute_keltner(closes, features["atr"], period=20, mult=1.5)
+            features.update(kc)
+
+        # Williams %R (14-period)
+        if len(closes) >= 14:
+            features["williams_r"] = self._compute_williams_r(highs, lows, closes, period=14)
+
+        # Chaikin Money Flow (20-period)
+        if len(closes) >= 20:
+            features["cmf"] = self._compute_cmf(highs, lows, closes, volumes, period=20)
+
+        # Fisher Transform (9-period)
+        if len(closes) >= 10:
+            ft = self._compute_fisher_transform(highs, lows, period=9)
+            features.update(ft)
+
+        # Fractal dimension (Higuchi method)
+        if len(closes) >= 64:
+            features["fractal_dimension"] = self._compute_fractal_dimension(closes[-128:] if len(closes) >= 128 else closes)
+
+        # Price entropy (information content of returns)
+        if len(closes) >= 50:
+            features["price_entropy"] = self._compute_price_entropy(closes[-100:] if len(closes) >= 100 else closes)
+
+        # Wavelet denoised trend (Daubechies-4 approximation)
+        if len(closes) >= 32:
+            wd = self._compute_wavelet_trend(closes)
+            features.update(wd)
+
+        # Squeeze detection (Bollinger inside Keltner)
+        if "bb_upper" in features and "kc_upper" in features:
+            features["squeeze_on"] = 1 if (
+                features["bb_upper"] < features["kc_upper"]
+                and features["bb_lower"] > features["kc_lower"]
+            ) else 0
 
         return features
 
@@ -383,3 +473,304 @@ class FeatureEngine:
             elif closes[i] < closes[i - 1]:
                 obv -= volumes[i]
         return float(obv)
+
+    # ── Advanced Algorithms (v3) ─────────────────────────────────────────
+
+    @staticmethod
+    def _compute_hurst(prices: np.ndarray) -> float:
+        """
+        Hurst exponent via Rescaled Range (R/S) analysis.
+        H < 0.5 = mean-reverting, H = 0.5 = random walk, H > 0.5 = trending.
+        Uses multiple window sizes for robust estimation.
+        """
+        n = len(prices)
+        if n < 20:
+            return 0.5
+
+        log_returns = np.diff(np.log(np.maximum(prices, 1e-10)))
+        # Use window sizes from 10 to n//2
+        min_w = 10
+        max_w = n // 2
+        if max_w <= min_w:
+            return 0.5
+
+        window_sizes = np.unique(np.logspace(
+            np.log10(min_w), np.log10(max_w), num=15, dtype=int
+        ))
+        window_sizes = window_sizes[window_sizes >= min_w]
+
+        log_rs = []
+        log_n = []
+
+        for w in window_sizes:
+            w = int(w)
+            n_segments = len(log_returns) // w
+            if n_segments < 1:
+                continue
+
+            rs_values = []
+            for seg in range(n_segments):
+                segment = log_returns[seg * w:(seg + 1) * w]
+                mean_seg = np.mean(segment)
+                deviations = np.cumsum(segment - mean_seg)
+                r = np.max(deviations) - np.min(deviations)
+                s = np.std(segment, ddof=1)
+                if s > 1e-12:
+                    rs_values.append(r / s)
+
+            if rs_values:
+                log_rs.append(np.log(np.mean(rs_values)))
+                log_n.append(np.log(w))
+
+        if len(log_rs) < 3:
+            return 0.5
+
+        # Linear regression: log(R/S) = H * log(n) + c
+        log_n_arr = np.array(log_n)
+        log_rs_arr = np.array(log_rs)
+        A = np.column_stack([log_n_arr, np.ones(len(log_n_arr))])
+        try:
+            result = np.linalg.lstsq(A, log_rs_arr, rcond=None)
+            hurst = float(result[0][0])
+        except np.linalg.LinAlgError:
+            return 0.5
+
+        return max(0.0, min(1.0, hurst))
+
+    @staticmethod
+    def _compute_keltner(closes: np.ndarray, atr: float,
+                         period: int = 20, mult: float = 1.5) -> dict:
+        """Keltner Channels: EMA ± ATR multiplier."""
+        multiplier = 2.0 / (period + 1)
+        ema = closes[0]
+        for price in closes[1:]:
+            ema = (price - ema) * multiplier + ema
+
+        upper = ema + mult * atr
+        lower = ema - mult * atr
+        width = (upper - lower) / ema if ema > 0 else 0.0
+
+        return {
+            "kc_upper": upper,
+            "kc_middle": ema,
+            "kc_lower": lower,
+            "kc_width": width,
+            "kc_percentile": (closes[-1] - lower) / (upper - lower) if upper != lower else 0.5,
+        }
+
+    @staticmethod
+    def _compute_williams_r(highs: np.ndarray, lows: np.ndarray,
+                            closes: np.ndarray, period: int = 14) -> float:
+        """Williams %R: momentum oscillator (-100 to 0)."""
+        highest = np.max(highs[-period:])
+        lowest = np.min(lows[-period:])
+        if highest == lowest:
+            return -50.0
+        return float(-100.0 * (highest - closes[-1]) / (highest - lowest))
+
+    @staticmethod
+    def _compute_cmf(highs: np.ndarray, lows: np.ndarray,
+                     closes: np.ndarray, volumes: np.ndarray,
+                     period: int = 20) -> float:
+        """
+        Chaikin Money Flow: volume-weighted accumulation/distribution.
+        Positive = buying pressure, Negative = selling pressure.
+        """
+        h = highs[-period:]
+        l = lows[-period:]
+        c = closes[-period:]
+        v = volumes[-period:]
+
+        hl_range = h - l
+        # Money Flow Multiplier: ((close - low) - (high - close)) / (high - low)
+        mfm = np.where(hl_range > 0, ((c - l) - (h - c)) / hl_range, 0.0)
+        mf_volume = mfm * v
+        total_vol = np.sum(v)
+
+        if total_vol == 0:
+            return 0.0
+        return float(np.sum(mf_volume) / total_vol)
+
+    @staticmethod
+    def _compute_fisher_transform(highs: np.ndarray, lows: np.ndarray,
+                                  period: int = 9) -> dict:
+        """
+        Fisher Transform: normalizes prices to Gaussian distribution.
+        Produces clear turning-point signals.
+        """
+        n = len(highs)
+        if n < period:
+            return {"fisher": 0.0, "fisher_signal": 0.0}
+
+        # Compute median price
+        median_prices = (highs + lows) / 2.0
+
+        # Normalize to [-1, 1] using rolling min/max
+        highest = np.max(median_prices[-period:])
+        lowest = np.min(median_prices[-period:])
+
+        if highest == lowest:
+            return {"fisher": 0.0, "fisher_signal": 0.0}
+
+        # Raw value clamped to (-0.999, 0.999) to avoid log singularity
+        raw = 2.0 * (median_prices[-1] - lowest) / (highest - lowest) - 1.0
+        raw = max(-0.999, min(0.999, raw))
+
+        # Fisher transform: 0.5 * ln((1+x)/(1-x)) with EMA smoothing
+        fisher = 0.5 * np.log((1.0 + raw) / (1.0 - raw))
+
+        # Signal line: previous value (simplified)
+        raw_prev = 2.0 * (median_prices[-2] - lowest) / (highest - lowest) - 1.0 if n >= 2 else 0.0
+        raw_prev = max(-0.999, min(0.999, raw_prev))
+        fisher_signal = 0.5 * np.log((1.0 + raw_prev) / (1.0 - raw_prev))
+
+        return {
+            "fisher": float(fisher),
+            "fisher_signal": float(fisher_signal),
+        }
+
+    @staticmethod
+    def _compute_fractal_dimension(prices: np.ndarray, k_max: int = 10) -> float:
+        """
+        Higuchi Fractal Dimension — measures price curve complexity.
+        FD ≈ 1.0 = smooth trend, FD ≈ 1.5 = random walk, FD ≈ 2.0 = very noisy.
+        Reference: T. Higuchi, "Approach to an irregular time series on the
+        basis of the fractal theory", Physica D, 1988.
+        """
+        n = len(prices)
+        k_max = min(k_max, n // 4)
+        if k_max < 2:
+            return 1.5
+
+        log_lengths = []
+        log_k = []
+
+        for k in range(1, k_max + 1):
+            lengths_k = []
+            for m in range(1, k + 1):
+                # Construct sub-series x(m), x(m+k), x(m+2k), ...
+                indices = np.arange(m - 1, n, k)
+                if len(indices) < 2:
+                    continue
+                sub = prices[indices]
+                # Length of this sub-series
+                L = np.sum(np.abs(np.diff(sub))) * (n - 1) / (k * (len(indices) - 1) * k)
+                lengths_k.append(L)
+
+            if lengths_k:
+                avg_length = np.mean(lengths_k)
+                if avg_length > 0:
+                    log_lengths.append(np.log(avg_length))
+                    log_k.append(np.log(1.0 / k))
+
+        if len(log_lengths) < 3:
+            return 1.5
+
+        # Linear regression slope = fractal dimension
+        x = np.array(log_k)
+        y = np.array(log_lengths)
+        A = np.column_stack([x, np.ones(len(x))])
+        try:
+            result = np.linalg.lstsq(A, y, rcond=None)
+            fd = float(result[0][0])
+        except np.linalg.LinAlgError:
+            return 1.5
+
+        return max(1.0, min(2.0, fd))
+
+    @staticmethod
+    def _compute_price_entropy(prices: np.ndarray, n_bins: int = 20) -> float:
+        """
+        Shannon entropy of return distribution.
+        High entropy = unpredictable; Low entropy = structured/trending.
+        Normalized to [0, 1].
+        """
+        returns = np.diff(np.log(np.maximum(prices, 1e-10)))
+        if len(returns) < 10:
+            return 1.0
+
+        # Histogram-based entropy
+        counts, _ = np.histogram(returns, bins=n_bins)
+        probs = counts / counts.sum()
+        probs = probs[probs > 0]
+
+        ent = float(sp_entropy(probs, base=2))
+        max_entropy = np.log2(n_bins)
+
+        return ent / max_entropy if max_entropy > 0 else 1.0
+
+    @staticmethod
+    def _compute_wavelet_trend(closes: np.ndarray) -> dict:
+        """
+        Haar wavelet decomposition for trend extraction.
+        Uses iterative averaging (Haar wavelet) to extract low-frequency trend
+        from noisy price data. Also computes denoised momentum.
+        """
+        n = len(closes)
+        # Pad to nearest power of 2
+        levels = 3  # 3 decomposition levels
+        target_len = 1 << (int(np.ceil(np.log2(max(n, 8)))))
+        padded = np.zeros(target_len)
+        padded[:n] = closes
+        padded[n:] = closes[-1]  # Pad with last value
+
+        # Haar wavelet decomposition (manual for no pywt dependency)
+        approx = padded.copy()
+        details = []
+        for _ in range(levels):
+            half = len(approx) // 2
+            if half < 1:
+                break
+            new_approx = np.zeros(half)
+            detail = np.zeros(half)
+            for j in range(half):
+                new_approx[j] = (approx[2 * j] + approx[2 * j + 1]) / np.sqrt(2)
+                detail[j] = (approx[2 * j] - approx[2 * j + 1]) / np.sqrt(2)
+            details.append(detail)
+            approx = new_approx
+
+        # Reconstruct denoised signal (zero out highest-frequency detail)
+        # This gives us the trend component
+        denoised = approx
+        for i in range(len(details) - 1, 0, -1):  # Skip finest detail [0]
+            d = details[i]
+            new_len = len(denoised) * 2
+            reconstructed = np.zeros(new_len)
+            for j in range(len(denoised)):
+                reconstructed[2 * j] = (denoised[j] + d[j]) / np.sqrt(2)
+                reconstructed[2 * j + 1] = (denoised[j] - d[j]) / np.sqrt(2)
+            denoised = reconstructed
+
+        # Pad back with zeros for finest detail
+        d0 = np.zeros(len(denoised))  # Zero out finest detail for denoising
+        new_len = len(denoised) * 2
+        reconstructed = np.zeros(new_len)
+        for j in range(len(denoised)):
+            reconstructed[2 * j] = (denoised[j] + d0[j]) / np.sqrt(2)
+            reconstructed[2 * j + 1] = (denoised[j] - d0[j]) / np.sqrt(2)
+        denoised = reconstructed
+
+        # Extract trend values at original series length
+        trend = denoised[:n]
+        trend_val = float(trend[-1]) if len(trend) > 0 else float(closes[-1])
+
+        # Wavelet-denoised momentum: slope of the trend line
+        if len(trend) >= 5:
+            slope = float(trend[-1] - trend[-5]) / 5.0
+        else:
+            slope = 0.0
+
+        # Noise ratio: std(detail) / std(signal)
+        if details and len(details[0]) > 1:
+            noise_energy = float(np.std(details[0]))
+            signal_energy = float(np.std(closes)) if np.std(closes) > 0 else 1.0
+            noise_ratio = noise_energy / signal_energy
+        else:
+            noise_ratio = 0.5
+
+        return {
+            "wavelet_trend": trend_val,
+            "wavelet_momentum": slope,
+            "wavelet_noise_ratio": float(min(noise_ratio, 2.0)),
+            "wavelet_trend_strength": abs(slope) / (float(np.std(closes[-20:])) + 1e-10) if len(closes) >= 20 else 0.0,
+        }

@@ -61,8 +61,8 @@ class TestHydraEnsemble:
         cont, cat = _make_batch(4, 32)
         out = model(cont, cat)
         gate_w = out["gate_attention_weights"]
-        # Shape: (batch, 1, 4) for 4 sub-models
-        assert gate_w.shape == (4, 1, 4)
+        # Shape: (batch, 1, 6) for 6 sub-models (TFT, LSTM, CNN, MoE, TCN, Transformer)
+        assert gate_w.shape == (4, 1, 6)
         # Softmax weights sum to 1
         sums = gate_w.sum(dim=-1)
         assert torch.allclose(sums, torch.ones_like(sums), atol=1e-5)

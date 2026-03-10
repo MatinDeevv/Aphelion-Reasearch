@@ -45,28 +45,34 @@ class TestTierVoting:
     def test_sovereign_infinite(self):
         assert TIER_VOTE_WEIGHTS[Tier.SOVEREIGN] == float('inf')
 
-    def test_council_100(self):
-        assert TIER_VOTE_WEIGHTS[Tier.COUNCIL] == 100
+    def test_general_20(self):
+        assert TIER_VOTE_WEIGHTS[Tier.GENERAL] == 20
 
-    def test_minister_40(self):
-        assert TIER_VOTE_WEIGHTS[Tier.MINISTER] == 40
+    def test_oracle_15(self):
+        assert TIER_VOTE_WEIGHTS[Tier.ORACLE] == 15
 
     def test_commander_10(self):
         assert TIER_VOTE_WEIGHTS[Tier.COMMANDER] == 10
 
-    def test_operator_1(self):
-        assert TIER_VOTE_WEIGHTS[Tier.OPERATOR] == 1
+    def test_lieutenant_5(self):
+        assert TIER_VOTE_WEIGHTS[Tier.LIEUTENANT] == 5
+
+    def test_sergeant_2(self):
+        assert TIER_VOTE_WEIGHTS[Tier.SERGEANT] == 2
+
+    def test_private_1(self):
+        assert TIER_VOTE_WEIGHTS[Tier.PRIVATE] == 1
 
 
 class TestModules:
-    def test_sentinel_is_council(self):
-        assert MODULES["SENTINEL"].tier == Tier.COUNCIL
+    def test_sentinel_is_general(self):
+        assert MODULES["SENTINEL"].tier == Tier.GENERAL
 
-    def test_hydra_is_minister(self):
-        assert MODULES["HYDRA"].tier == Tier.MINISTER
+    def test_hydra_is_oracle(self):
+        assert MODULES["HYDRA"].tier == Tier.ORACLE
 
-    def test_venom_is_commander(self):
-        assert MODULES["VENOM"].tier == Tier.COMMANDER
+    def test_venom_is_private(self):
+        assert MODULES["VENOM"].tier == Tier.PRIVATE
 
     def test_all_modules_present(self):
         expected = {
@@ -74,7 +80,7 @@ class TestModules:
             "PHANTOM", "NEMESIS", "FORGE", "ATLAS", "DATA",
             "BACKTEST", "VENOM", "REAPER", "APEX", "WRAITH", "SHADOW",
             "KRONOS", "ECHO", "CASSANDRA", "ORACLE", "TITAN",
-            "GHOST", "FUND",
+            "GHOST", "FUND", "SIGNAL_TOWER", "FLOW", "MACRO", "MERIDIAN",
         }
         assert set(MODULES.keys()) == expected
 

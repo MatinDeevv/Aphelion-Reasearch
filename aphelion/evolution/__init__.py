@@ -7,3 +7,19 @@ Sub-packages:
   prometheus – Evolutionary engine (NEAT, PBT, Bayesian optimisation)
   zeus       – Pre-deployment stress testing & GAN overfitting detection
 """
+
+from .auto_optimizer import (
+    AutoOptimizer,
+    PerformanceMonitor as OptPerformanceMonitor,
+    DegradationSignal,
+    OptAction,
+    OptimizationRun,
+)
+
+__all__ = [
+    "AutoOptimizer",
+    "OptPerformanceMonitor",
+    "DegradationSignal",
+    "OptAction",
+    "OptimizationRun",
+]

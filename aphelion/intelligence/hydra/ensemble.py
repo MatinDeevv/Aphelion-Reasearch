@@ -22,6 +22,8 @@ from aphelion.intelligence.hydra.tft import TFTConfig, TemporalFusionTransformer
 from aphelion.intelligence.hydra.lstm import LSTMConfig, HydraLSTM
 from aphelion.intelligence.hydra.cnn import CNNConfig, HydraCNN
 from aphelion.intelligence.hydra.moe import MoEConfig, HydraMoE
+from aphelion.intelligence.hydra.tcn import TCNConfig, HydraTCN
+from aphelion.intelligence.hydra.transformer import TransformerConfig, HydraTransformer
 
 
 @dataclass
@@ -31,6 +33,8 @@ class EnsembleConfig:
     lstm_config: LSTMConfig = field(default_factory=LSTMConfig)
     cnn_config: CNNConfig = field(default_factory=CNNConfig)
     moe_config: MoEConfig = field(default_factory=MoEConfig)
+    tcn_config: TCNConfig = field(default_factory=TCNConfig)
+    transformer_config: TransformerConfig = field(default_factory=TransformerConfig)
 
     # Master projection size
     gate_hidden_size: int = 256
@@ -50,6 +54,8 @@ if HAS_TORCH:
         2. LSTM (Sequence Momentum / State persistence)
         3. CNN (Structural Pattern matching)
         4. MoE (Regime-specific specializations)
+        5. TCN (Long-range temporal dependencies via dilated causal convolutions)
+        6. Transformer (Global context extraction via multi-head self-attention)
         """
         def __init__(self, config: Optional[EnsembleConfig] = None):
             super().__init__()
@@ -61,11 +67,15 @@ if HAS_TORCH:
             self.lstm = HydraLSTM(cfg.lstm_config)
             self.cnn = HydraCNN(cfg.cnn_config)
             self.moe = HydraMoE(cfg.moe_config)
+            self.tcn = HydraTCN(cfg.tcn_config)
+            self.transformer = HydraTransformer(cfg.transformer_config)
 
             # Projection from sub-model latent sizes -> gate hidden size
             self.lstm_proj = nn.Linear(cfg.lstm_config.hidden_size, cfg.gate_hidden_size)
             self.cnn_proj = nn.Linear(cfg.cnn_config.hidden_size, cfg.gate_hidden_size)
             self.moe_proj = nn.Linear(cfg.moe_config.hidden_size, cfg.gate_hidden_size)
+            self.tcn_proj = nn.Linear(cfg.tcn_config.hidden_size, cfg.gate_hidden_size)
+            self.transformer_proj = nn.Linear(cfg.transformer_config.hidden_size, cfg.gate_hidden_size)
             
             # The TFT doesn't output a single latent naturally in its public API
             # that we've exposed, but we can capture its final FF output.
@@ -148,9 +158,15 @@ if HAS_TORCH:
             ], dim=-1)
             l_tft = self.tft_adapter(tft_flat).unsqueeze(1)  # (batch, 1, hidden)
 
-            # Stack into a sequence of 4 "tokens" representing the 4 models
-            # Shape: (batch, 4, gate_hidden_size)
-            latents = torch.cat([l_tft, l_lstm, l_cnn, l_moe], dim=1)
+            # TCN and Transformer latents
+            tcn_out = self.tcn(cont_inputs, cat_inputs)
+            trans_out = self.transformer(cont_inputs, cat_inputs)
+            l_tcn = self.tcn_proj(tcn_out["latent"]).unsqueeze(1)      # (batch, 1, hidden)
+            l_trans = self.transformer_proj(trans_out["latent"]).unsqueeze(1)  # (batch, 1, hidden)
+
+            # Stack into a sequence of 6 "tokens" representing the 6 DL models
+            # Shape: (batch, 6, gate_hidden_size)
+            latents = torch.cat([l_tft, l_lstm, l_cnn, l_moe, l_tcn, l_trans], dim=1)
 
             # 3. Dynamic Attention Gate
             batch_size = latents.size(0)
@@ -158,7 +174,7 @@ if HAS_TORCH:
             # Q: (batch, 1, hidden)
             Q = self.master_query.expand(batch_size, -1, -1)
             
-            # K, V: (batch, 4, hidden)
+            # K, V: (batch, 6, hidden)
             K = self.attn_k(latents)
             V = self.attn_v(latents)
             
@@ -209,6 +225,8 @@ if HAS_TORCH:
                 "lstm_logits": lstm_out["aux_logits"],
                 "cnn_logits": cnn_out["aux_logits"],
                 "moe_logits": moe_out["aux_logits"],
+                "tcn_logits": tcn_out["aux_logits"],
+                "transformer_logits": trans_out["aux_logits"],
 
                 # Interpretability forward-pass from TFT
                 "feature_weights": tft_out["feature_weights"]
