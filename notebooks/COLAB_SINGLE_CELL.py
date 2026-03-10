@@ -40,12 +40,20 @@ print(f"  VRAM: {vram_gb:.1f} GB")
 print(f"  PyTorch: {torch.__version__}")
 print(f"  CUDA: {torch.version.cuda}")
 
+# OPTIMIZED: Enable TF32 on Ampere+ GPUs (A100, H100) for 3x faster matmul
+torch.backends.cudnn.benchmark = True
+torch.backends.cuda.matmul.allow_tf32 = True
+torch.backends.cudnn.allow_tf32 = True
+if hasattr(torch, 'set_float32_matmul_precision'):
+    torch.set_float32_matmul_precision('high')  # TF32 for all matmuls
+print(f"  TF32/cuDNN benchmark: ENABLED")
+
 # Determine optimal batch size based on GPU
 if vram_gb >= 35:      # A100 40/80GB
-    BATCH_SIZE = 128
+    BATCH_SIZE = 192    # OPTIMIZED: A100 can handle more
     NUM_WORKERS = 4
 elif vram_gb >= 20:    # L4 24GB
-    BATCH_SIZE = 96
+    BATCH_SIZE = 128
     NUM_WORKERS = 2
 else:                  # T4 16GB
     BATCH_SIZE = 64
@@ -298,7 +306,7 @@ def run_one_round(data_file, max_epochs, tag, description):
         save_every_n_epochs=max(1, actual_epochs // 10),
         patience=max(15, actual_epochs // 4),
         warmup_epochs=10,
-        gradient_accumulation_steps=4,
+        gradient_accumulation_steps=2,  # OPTIMIZED: 2x instead of 4x (larger batch already)
         mixup_alpha=0.2,
         swa_start_epoch=max(actual_epochs - 50, actual_epochs + 1),
         label_smoothing=0.1,

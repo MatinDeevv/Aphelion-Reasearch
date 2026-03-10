@@ -160,14 +160,37 @@ def build_dataset_from_feature_dicts(
     n_cat = len(CATEGORICAL_FEATURES)
     max_horizon = max(config.horizon_5m, config.horizon_15m, config.horizon_1h)
 
-    # Extract all features into matrices
-    cont_matrix = np.zeros((n_bars, n_cont), dtype=np.float32)
-    cat_matrix = np.zeros((n_bars, n_cat), dtype=np.int64)
+    # OPTIMIZED: Vectorized feature extraction using pandas DataFrame
+    # Avoids 100K+ Python dict lookups per feature
+    import pandas as pd
+    if isinstance(feature_dicts, list) and len(feature_dicts) > 0:
+        # Convert list of dicts to DataFrame in one shot
+        df_features = pd.DataFrame(feature_dicts)
 
-    for i, fd in enumerate(feature_dicts):
-        cont, cat = _extract_features_from_bar_dict(fd, close_prices[i])
-        cont_matrix[i] = cont
-        cat_matrix[i] = cat
+        # Extract continuous features — vectorized
+        cont_matrix = np.zeros((n_bars, n_cont), dtype=np.float32)
+        for i, key in enumerate(CONTINUOUS_FEATURES):
+            if key in df_features.columns:
+                col = pd.to_numeric(df_features[key], errors='coerce').values.astype(np.float32)
+                # Replace NaN/Inf with 0
+                bad_mask = ~np.isfinite(col)
+                if bad_mask.any():
+                    col[bad_mask] = 0.0
+                cont_matrix[:, i] = col
+
+        # Extract categorical features — vectorized
+        cat_matrix = np.zeros((n_bars, n_cat), dtype=np.int64)
+        if 'session' in df_features.columns:
+            cat_matrix[:, 0] = df_features['session'].map(
+                lambda x: SESSION_MAP.get(x, 4) if isinstance(x, str) else 4
+            ).values
+        if 'day_of_week' in df_features.columns:
+            cat_matrix[:, 1] = df_features['day_of_week'].map(
+                lambda x: DAY_MAP.get(x, 0) if isinstance(x, str) else 0
+            ).values
+    else:
+        cont_matrix = np.zeros((n_bars, n_cont), dtype=np.float32)
+        cat_matrix = np.zeros((n_bars, n_cat), dtype=np.int64)
 
     # Normalize continuous features (z-score)
     # Use only training portion for stats to prevent leakage
@@ -245,7 +268,9 @@ def build_dataset_from_feature_dicts(
 
 class HydraDataset:
     """
-    PyTorch-compatible dataset for TFT training.
+    OPTIMIZED PyTorch-compatible dataset for TFT training.
+    Pre-converts numpy arrays to contiguous tensors at construction time
+    to avoid per-sample torch.from_numpy() overhead.
     Returns (continuous_seq, categorical_seq, labels_5m, labels_15m, labels_1h, raw_returns).
     """
 
@@ -260,12 +285,15 @@ class HydraDataset:
         indices: list[int],
         lookback: int,
     ):
-        self._cont = cont_matrix
-        self._cat = cat_matrix
-        self._labels_5m = labels_5m
-        self._labels_15m = labels_15m
-        self._labels_1h = labels_1h
-        self._raw_returns = raw_returns
+        if not HAS_TORCH:
+            raise ImportError("PyTorch required")
+        # Pre-convert to tensors — massive speedup in __getitem__
+        self._cont = torch.from_numpy(np.ascontiguousarray(cont_matrix)).float()
+        self._cat = torch.from_numpy(np.ascontiguousarray(cat_matrix)).long()
+        self._labels_5m = torch.from_numpy(np.ascontiguousarray(labels_5m)).long()
+        self._labels_15m = torch.from_numpy(np.ascontiguousarray(labels_15m)).long()
+        self._labels_1h = torch.from_numpy(np.ascontiguousarray(labels_1h)).long()
+        self._raw_returns = torch.from_numpy(np.ascontiguousarray(raw_returns)).float()
         self._indices = indices
         self._lookback = lookback
 
@@ -273,20 +301,18 @@ class HydraDataset:
         return len(self._indices)
 
     def __getitem__(self, idx: int):
-        if not HAS_TORCH:
-            raise ImportError("PyTorch required")
-
         center = self._indices[idx]
         start = center - self._lookback
 
-        cont_seq = torch.from_numpy(self._cont[start:center])  # (lookback, n_cont)
-        cat_seq = torch.from_numpy(self._cat[start:center])    # (lookback, n_cat)
-        label_5m = torch.tensor(self._labels_5m[center], dtype=torch.long)
-        label_15m = torch.tensor(self._labels_15m[center], dtype=torch.long)
-        label_1h = torch.tensor(self._labels_1h[center], dtype=torch.long)
-        raw_ret = torch.from_numpy(self._raw_returns[center])  # (3,)
-
-        return cont_seq, cat_seq, label_5m, label_15m, label_1h, raw_ret
+        # Tensor slicing — no numpy conversion needed, zero-copy
+        return (
+            self._cont[start:center],           # (lookback, n_cont)
+            self._cat[start:center],             # (lookback, n_cat)
+            self._labels_5m[center],
+            self._labels_15m[center],
+            self._labels_1h[center],
+            self._raw_returns[center],           # (3,)
+        )
 
 
 def create_dataloaders(

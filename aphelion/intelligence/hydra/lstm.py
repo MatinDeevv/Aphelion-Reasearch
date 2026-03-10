@@ -45,7 +45,8 @@ if HAS_TORCH:
     class MultiHeadSelfAttention(nn.Module):
         """Multi-head self-attention with causal masking and residual."""
 
-        def __init__(self, hidden_size: int, n_heads: int = 8, dropout: float = 0.1):
+        def __init__(self, hidden_size: int, n_heads: int = 8, dropout: float = 0.1,
+                     max_seq_len: int = 128):
             super().__init__()
             assert hidden_size % n_heads == 0
             self.n_heads = n_heads
@@ -57,6 +58,10 @@ if HAS_TORCH:
             self.dropout = nn.Dropout(dropout)
             self.norm = nn.LayerNorm(hidden_size)
 
+            # OPTIMIZED: Pre-register causal mask buffer — no allocation per forward call
+            causal = torch.triu(torch.ones(max_seq_len, max_seq_len), diagonal=1).bool()
+            self.register_buffer("causal_mask", causal, persistent=False)
+
         def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
             batch, seq_len, _ = x.shape
             residual = x
@@ -66,11 +71,13 @@ if HAS_TORCH:
             K = self.W_k(x).view(batch, seq_len, self.n_heads, self.d_k).transpose(1, 2)
             V = self.W_v(x).view(batch, seq_len, self.n_heads, self.d_k).transpose(1, 2)
 
-            scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
+            scores = torch.matmul(Q, K.transpose(-2, -1)) / (self.d_k ** 0.5)
 
-            # Causal mask
-            causal = torch.triu(torch.ones(seq_len, seq_len, device=x.device), diagonal=1).bool()
-            scores = scores.masked_fill(causal.unsqueeze(0).unsqueeze(0), float("-inf"))
+            # Use pre-buffered causal mask (no allocation)
+            scores = scores.masked_fill(
+                self.causal_mask[:seq_len, :seq_len].unsqueeze(0).unsqueeze(0),
+                float("-inf"),
+            )
 
             attn = F.softmax(scores, dim=-1)
             attn = self.dropout(attn)

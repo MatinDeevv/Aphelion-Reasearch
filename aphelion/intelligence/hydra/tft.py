@@ -281,10 +281,12 @@ if HAS_TORCH:
             cfg = self.config
 
             # ── Input Embeddings ──────────────────────────────────────────
-            # Project each continuous feature to hidden_dim individually
-            self.cont_projections = nn.ModuleList([
-                nn.Linear(1, cfg.hidden_dim) for _ in range(cfg.n_continuous)
-            ])
+            # OPTIMIZED: Single batched projection for ALL continuous features
+            # Instead of 58 individual nn.Linear(1, hidden), use one weight matrix
+            # Shape: (n_continuous, hidden_dim) — each row is one feature's projection
+            self.cont_weight = nn.Parameter(torch.empty(cfg.n_continuous, cfg.hidden_dim))
+            self.cont_bias = nn.Parameter(torch.zeros(cfg.n_continuous, cfg.hidden_dim))
+            nn.init.xavier_uniform_(self.cont_weight)
 
             # Categorical embeddings
             self.cat_embeddings = nn.ModuleList([
@@ -371,6 +373,10 @@ if HAS_TORCH:
                 nn.Softplus(),  # Ensure positive uncertainty
             )
 
+            # OPTIMIZED: Pre-register causal mask buffer
+            causal = torch.tril(torch.ones(cfg.lookback, cfg.lookback)).unsqueeze(0)
+            self.register_buffer("causal_mask", causal, persistent=False)
+
             self._init_weights()
 
         def _init_weights(self):
@@ -401,11 +407,11 @@ if HAS_TORCH:
             batch, seq_len, _ = cont_inputs.shape
 
             # ── 1. Input Embeddings ───────────────────────────────────────
-            # Project each continuous feature individually
-            cont_embedded = []
-            for i, proj in enumerate(self.cont_projections):
-                cont_embedded.append(proj(cont_inputs[:, :, i:i+1]))
-            # (batch, seq_len, n_cont, hidden)
+            # OPTIMIZED: Batched projection — no Python loop over 58 features
+            # cont_inputs: (batch, seq, n_cont) → (batch, seq, n_cont, hidden)
+            cont_embedded = cont_inputs.unsqueeze(-1) * self.cont_weight + self.cont_bias
+            # cont_embedded is now (batch, seq, n_cont, hidden) — split to list for VSN
+            cont_embedded = [cont_embedded[:, :, i, :] for i in range(cfg.n_continuous)]
 
             cat_embedded = []
             for i, (emb, proj) in enumerate(zip(self.cat_embeddings, self.cat_projections)):
@@ -429,10 +435,8 @@ if HAS_TORCH:
             lstm_processed = self.post_lstm_norm(lstm_processed + selected)
 
             # ── 4. Multi-Head Attention ───────────────────────────────────
-            # Causal mask to prevent attending to future
-            causal_mask = torch.tril(
-                torch.ones(seq_len, seq_len, device=cont_inputs.device),
-            ).unsqueeze(0)
+            # OPTIMIZED: Use pre-buffered causal mask
+            causal_mask = self.causal_mask[:, :seq_len, :seq_len]
 
             attn_out, attn_weights = self.attention(
                 lstm_processed, lstm_processed, lstm_processed, causal_mask,

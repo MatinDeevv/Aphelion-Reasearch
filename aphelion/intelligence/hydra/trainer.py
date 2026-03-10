@@ -155,6 +155,30 @@ if HAS_TORCH:
                 f"{self._model.count_parameters():,}", self._device,
             )
 
+            # OPTIMIZED: Enable cudnn benchmark for consistent input sizes
+            if self._device.type == "cuda":
+                torch.backends.cudnn.benchmark = True
+
+            # OPTIMIZED: Detect bfloat16 support (A100/H100)
+            self._use_bf16 = False
+            if cfg.use_amp and self._device.type == "cuda":
+                try:
+                    if torch.cuda.is_bf16_supported():
+                        self._use_bf16 = True
+                        logger.info("BFloat16 supported — using BF16 (faster than FP16, no scaler needed)")
+                except AttributeError:
+                    pass
+
+            # OPTIMIZED: torch.compile() for 20-50% speedup on PyTorch 2.x
+            self._compiled = False
+            if hasattr(torch, 'compile') and self._device.type == "cuda":
+                try:
+                    self._model = torch.compile(self._model, mode="reduce-overhead")
+                    self._compiled = True
+                    logger.info("torch.compile() enabled (reduce-overhead mode)")
+                except Exception as e:
+                    logger.warning("torch.compile() failed: %s — falling back to eager", e)
+
             # Separate LR groups: sub-models vs gate layers
             sub_model_params = []
             gate_params = []
@@ -180,7 +204,9 @@ if HAS_TORCH:
             )
             self._quantile = QuantileLoss(cfg.ensemble_config.tft_config.quantile_targets)
             amp_enabled = cfg.use_amp and self._device.type == "cuda"
-            self._scaler = self._create_grad_scaler(enabled=amp_enabled)
+            # BF16 doesn't need GradScaler
+            scaler_enabled = amp_enabled and not self._use_bf16
+            self._scaler = self._create_grad_scaler(enabled=scaler_enabled)
 
             # SWA model
             # Store initial LRs for warmup scheduling
@@ -220,8 +246,10 @@ if HAS_TORCH:
         def _autocast_context(self):
             if not self._config.use_amp or self._device.type != "cuda":
                 return nullcontext()
+            # OPTIMIZED: Use bfloat16 on A100/H100 for faster math
+            dtype = torch.bfloat16 if self._use_bf16 else torch.float16
             try:
-                return torch.amp.autocast("cuda", enabled=True)
+                return torch.amp.autocast("cuda", enabled=True, dtype=dtype)
             except (AttributeError, TypeError):
                 return torch.cuda.amp.autocast(enabled=True)
 
@@ -271,7 +299,8 @@ if HAS_TORCH:
             print(f"  Effective batch: {train_loader.batch_size * cfg.gradient_accumulation_steps}")
             print(f"  LR: {cfg.learning_rate} | Warmup: {cfg.warmup_epochs} epochs")
             print(f"  Losses: Focal+Quantile+6xAux+MoE_LB+Diversity")
-            print(f"  AMP: {cfg.use_amp} | Device: {self._device}")
+            print(f"  AMP: {cfg.use_amp} ({'BF16' if self._use_bf16 else 'FP16'}) | "
+                  f"Device: {self._device} | Compiled: {self._compiled}")
             print(f"  {self._gpu_stats()}")
             print(f"{'━' * 70}\n")
 
@@ -398,15 +427,13 @@ if HAS_TORCH:
         @staticmethod
         def _diversity_loss(logits_list: list[list[torch.Tensor]]) -> torch.Tensor:
             """
-            Diversity loss: encourage sub-models to produce different predictions.
-            Uses cosine similarity between sub-model prediction vectors.
-            Lower similarity = more diversity = better ensemble.
+            OPTIMIZED diversity loss: encourage sub-models to produce different predictions.
+            Uses batched cosine similarity instead of Python loops.
             """
             # Collect the primary logits from each sub-model
             flat = []
             for logits in logits_list:
                 if isinstance(logits, list):
-                    # TFT: list of [logits_5m, logits_15m, logits_1h]
                     flat.append(torch.cat(logits, dim=-1))
                 else:
                     flat.append(logits)
@@ -414,21 +441,22 @@ if HAS_TORCH:
             if len(flat) < 2:
                 return torch.tensor(0.0)
 
-            # Stack: (n_models, batch, logit_dims) — dims may vary so use first timeframe
-            # Compute pairwise cosine similarity between model outputs
-            total_sim = torch.tensor(0.0, device=flat[0].device)
-            count = 0
-            for i in range(len(flat)):
-                for j in range(i + 1, len(flat)):
-                    # Project to same dim: use min
-                    min_dim = min(flat[i].size(-1), flat[j].size(-1))
-                    a = flat[i][:, :min_dim]
-                    b = flat[j][:, :min_dim]
-                    sim = F.cosine_similarity(a, b, dim=-1).mean()
-                    total_sim = total_sim + sim.abs()
-                    count += 1
+            # Truncate all to same dim (minimum) and stack
+            min_dim = min(f.size(-1) for f in flat)
+            stacked = torch.stack([f[:, :min_dim] for f in flat], dim=0)  # (n_models, batch, dim)
 
-            return total_sim / max(count, 1)
+            # Normalize once
+            stacked_norm = F.normalize(stacked, p=2, dim=-1)
+
+            # Batch pairwise cosine similarity: (n_models, n_models, batch)
+            # Use einsum for efficiency
+            sim_matrix = torch.einsum('ibd,jbd->ijb', stacked_norm, stacked_norm)
+
+            # Extract upper triangle (exclude diagonal) and average
+            n = stacked.size(0)
+            mask = torch.triu(torch.ones(n, n, device=stacked.device), diagonal=1).bool()
+            pairwise_sims = sim_matrix[mask]  # all upper-triangle similarities
+            return pairwise_sims.abs().mean()
 
         def _train_epoch(self, loader) -> dict:
             self._model.train()
@@ -594,8 +622,9 @@ if HAS_TORCH:
             """Only use mixup after warmup phase."""
             return self._epoch >= self._config.warmup_epochs
 
-        @torch.no_grad()
+        @torch.inference_mode()
         def _validate(self, loader) -> dict:
+            """OPTIMIZED: Uses torch.inference_mode (faster than no_grad)."""
             self._model.eval()
             cfg = self._config
 

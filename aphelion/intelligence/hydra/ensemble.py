@@ -298,12 +298,14 @@ if HAS_TORCH:
 
             # ── 3. Stochastic Model Dropout ───────────────────────────────
             if self.training and self.model_dropout_p > 0:
+                # OPTIMIZED: Use deterministic mask generation — no while loop
                 mask = (torch.rand(latents.size(0), NUM_SUB_MODELS, 1,
                                    device=latents.device) > self.model_dropout_p).float()
-                # Ensure at least 2 models are active
-                while mask.sum(dim=1).min() < 2:
-                    mask = (torch.rand_like(mask) > self.model_dropout_p).float()
-                latents = latents * mask / (1.0 - self.model_dropout_p)
+                # Ensure at least 2 models active — clamp to guarantee
+                active = mask.sum(dim=1, keepdim=True)
+                too_few = (active < 2.0).expand_as(mask)
+                mask = torch.where(too_few, torch.ones_like(mask), mask)
+                latents = latents * mask / max(1.0 - self.model_dropout_p, 0.5)
 
             # ── 4. Cross-Model Interaction ────────────────────────────────
             for layer in self.interaction_layers:

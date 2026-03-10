@@ -364,14 +364,15 @@ class TestFullPipelinePhase7:
         assert gw.shape[-1] == 6  # TFT, LSTM, CNN, MoE, TCN, Transformer
 
     def test_moe_routing_captures_all_experts(self):
-        """MoE routing weights span all 4 experts."""
-        model = HydraGate(_small_config())
+        """MoE routing weights span all experts (default: 8)."""
+        cfg = _small_config()
+        model = HydraGate(cfg)
         model.eval()
         cont, cat = _make_batch(2, 32)
         with torch.no_grad():
             out = model(cont, cat)
         rw = out["moe_routing_weights"]
-        assert rw.shape[-1] == 4
+        assert rw.shape[-1] == cfg.moe_config.num_experts
         sums = rw.sum(dim=-1)
         assert torch.allclose(sums, torch.ones_like(sums), atol=1e-5)
 

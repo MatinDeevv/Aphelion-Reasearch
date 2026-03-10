@@ -27,7 +27,7 @@ from aphelion.intelligence.hydra.moe import MoEConfig, HydraMoE
 from aphelion.intelligence.hydra.trainer import (
     HydraTrainer,
     TrainerConfig,
-    FocalLoss,
+    LabelSmoothingFocalLoss as FocalLoss,
     QuantileLoss,
 )
 from aphelion.intelligence.hydra.inference import HydraInference, HydraSignal

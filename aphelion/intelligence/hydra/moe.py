@@ -252,20 +252,29 @@ if HAS_TORCH:
             # Top-K routing
             routing_weights, top_k_idx, load_balance_loss = self.router(router_input)
 
-            # Run ALL experts (for simplicity — in practice only top-k would run)
-            expert_outputs = torch.stack([
-                expert(router_input) for expert in self.experts
-            ], dim=1)  # (batch, num_experts, hidden)
+            # OPTIMIZED: Only run top-K experts per sample (not all 8)
+            batch_size = router_input.size(0)
+            combined = torch.zeros(batch_size, cfg.hidden_size, device=router_input.device,
+                                   dtype=router_input.dtype)
 
-            # Apply expert dropout during training
-            if self.training:
-                expert_outputs = self.expert_dropout(expert_outputs)
+            # Get the unique set of active experts across the batch
+            active_experts = top_k_idx.unique()
 
-            # Weighted combination using sparse routing weights
-            # Cast routing_weights to same dtype as expert_outputs for bmm
-            combined = torch.bmm(
-                routing_weights.unsqueeze(1).to(expert_outputs.dtype), expert_outputs,
-            ).squeeze(1)  # (batch, hidden)
+            for expert_idx in active_experts:
+                expert_idx_item = expert_idx.item()
+                # Find which samples use this expert
+                sample_mask = (top_k_idx == expert_idx).any(dim=-1)  # (batch,)
+                if not sample_mask.any():
+                    continue
+                # Only run expert on those samples
+                expert_input = router_input[sample_mask]
+                expert_output = self.experts[expert_idx_item](expert_input)
+                # Apply expert dropout during training
+                if self.training:
+                    expert_output = self.expert_dropout(expert_output)
+                # Weight by routing weight for this expert
+                weights = routing_weights[sample_mask, expert_idx_item].unsqueeze(-1)
+                combined[sample_mask] = combined[sample_mask] + weights.to(expert_output.dtype) * expert_output
 
             proj = self.output_proj(combined)
 
