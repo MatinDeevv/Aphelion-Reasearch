@@ -4,13 +4,14 @@
 # ║              160M Parameter 6-Model Neural Ensemble for XAUUSD             ║
 # ║                                                                            ║
 # ║   1. Run this cell                                                         ║
-# ║   2. Upload Aphelion_upload.zip when prompted                              ║
-# ║   3. Walk away for 8 hours                                                 ║
-# ║   4. Come back to a trained model saved to Google Drive                    ║
+# ║   2. Upload Aphelion_data.zip when prompted (18 MB data only)              ║
+# ║   3. Authorize Google Drive when prompted                                  ║
+# ║   4. Walk away for 8 hours                                                 ║
+# ║   5. Come back to a trained model saved to Google Drive                    ║
 # ║                                                                            ║
 # ╚══════════════════════════════════════════════════════════════════════════════╝
 
-import os, sys, time, shutil, zipfile, subprocess, signal
+import os, sys, time, shutil, zipfile, subprocess
 from pathlib import Path
 
 START_TIME = time.time()
@@ -40,7 +41,7 @@ print(f"  PyTorch: {torch.__version__}")
 print(f"  CUDA: {torch.version.cuda}")
 
 # Determine optimal batch size based on GPU
-if vram_gb >= 35:      # A100 40GB
+if vram_gb >= 35:      # A100 40/80GB
     BATCH_SIZE = 128
     NUM_WORKERS = 4
 elif vram_gb >= 20:    # L4 24GB
@@ -55,74 +56,78 @@ print("  ✓ GPU ready")
 print()
 
 # ═══════════════════════════════════════════════════════════════
-#  PHASE 2: UPLOAD & EXTRACT
+#  PHASE 2: CLONE REPO FROM GITHUB
 # ═══════════════════════════════════════════════════════════════
 print("=" * 70)
-print("  PHASE 2: UPLOAD YOUR ZIP FILE")
+print("  PHASE 2: CLONE REPO FROM GITHUB")
 print("=" * 70)
 
-# Detect project root — handles both flat zip (aphelion/, scripts/ at root)
-# and wrapped zip (Aphelion/aphelion/, Aphelion/scripts/)
-def find_project_root():
-    """Find where aphelion/ and scripts/ live after extraction."""
-    # Check if already extracted from a previous run
-    for candidate in ['/content/Aphelion', '/content/aphelion_project']:
-        if os.path.exists(os.path.join(candidate, 'aphelion', 'intelligence')):
-            return candidate
-    # Check if flat in /content/ (zip had aphelion/, scripts/ at root)
-    if os.path.exists('/content/aphelion/intelligence'):
-        return '/content'
-    return None
+REPO_URL = "https://github.com/MatinDeevv/Aphelion-Reasearch.git"
+PROJECT = "/content/Aphelion-Reasearch"
 
-PROJECT = find_project_root()
-if PROJECT:
-    print("  Project already uploaded, skipping...")
+if os.path.exists(os.path.join(PROJECT, 'aphelion', 'intelligence', 'hydra', 'ensemble.py')):
+    print("  Repo already cloned, skipping...")
+else:
+    if os.path.exists(PROJECT):
+        shutil.rmtree(PROJECT)
+    print(f"  Cloning {REPO_URL} ...")
+    subprocess.run(['git', 'clone', '--depth', '1', REPO_URL, PROJECT], check=True)
+    print("  ✓ Clone complete")
+
+os.chdir(PROJECT)
+print(f"  Project root: {PROJECT}")
+print(f"  Contents: {sorted(os.listdir('.')[:15])}")
+
+# Verify critical files
+assert os.path.exists('aphelion/intelligence/hydra/ensemble.py'), "Missing ensemble.py!"
+assert os.path.exists('scripts/train_hydra.py'), "Missing train_hydra.py!"
+print("  ✓ Project structure verified")
+print()
+
+# ═══════════════════════════════════════════════════════════════
+#  PHASE 3: UPLOAD DATA (CSV files not in git)
+# ═══════════════════════════════════════════════════════════════
+print("=" * 70)
+print("  PHASE 3: UPLOAD TRAINING DATA")
+print("=" * 70)
+
+if os.path.exists('data/bars') and any(f.endswith('.csv') for f in os.listdir('data/bars')):
+    print("  Data already present, skipping upload...")
 else:
     from google.colab import files
     print()
     print("  ╔══════════════════════════════════════════════════╗")
     print("  ║  Click 'Choose Files' below and select:         ║")
-    print("  ║  C:\\Users\\marti\\Aphelion_upload.zip             ║")
+    print("  ║  C:\\Users\\marti\\Aphelion_data.zip               ║")
+    print("  ║  (18 MB — contains only CSV bar data)           ║")
     print("  ╚══════════════════════════════════════════════════╝")
     print()
     uploaded = files.upload()
     zip_name = list(uploaded.keys())[0]
     print(f"  Extracting {zip_name}...")
     with zipfile.ZipFile(zip_name, 'r') as z:
-        z.extractall('/content/')
+        z.extractall('.')
+    print("  ✓ Data extracted")
 
-    PROJECT = find_project_root()
-    if PROJECT is None:
-        # Last resort: list what was extracted and show debug info
-        top_items = os.listdir('/content/')
-        raise RuntimeError(
-            f"Cannot find project root! /content/ contains: {top_items}\n"
-            f"Expected aphelion/intelligence/ directory to exist."
-        )
-
-os.chdir(PROJECT)
-print(f"  Project root: {PROJECT}")
-print(f"  Contents: {sorted(os.listdir('.')[:15])}")
-
-# Verify critical files exist
-assert os.path.exists('aphelion/intelligence/hydra/ensemble.py'), \
-    f"Missing ensemble.py! In {PROJECT}: {os.listdir('aphelion') if os.path.exists('aphelion') else 'NO aphelion/'}"
-assert os.path.exists('scripts/train_hydra.py'), \
-    f"Missing train_hydra.py! In {PROJECT}: {os.listdir('.') if os.path.exists('scripts') else 'NO scripts/'}"
-print("  ✓ Project structure verified")
+# Verify data exists
+assert os.path.exists('data/bars'), "data/bars/ not found after extraction!"
+csv_count = len([f for f in os.listdir('data/bars') if f.endswith('.csv')])
+assert csv_count > 0, "No CSV files found in data/bars/!"
+print(f"  Found {csv_count} CSV files in data/bars/")
 print()
 
 # ═══════════════════════════════════════════════════════════════
-#  PHASE 3: INSTALL DEPENDENCIES
+#  PHASE 4: INSTALL DEPENDENCIES
 # ═══════════════════════════════════════════════════════════════
 print("=" * 70)
-print("  PHASE 3: INSTALLING DEPENDENCIES")
+print("  PHASE 4: INSTALLING DEPENDENCIES")
 print("=" * 70)
 
 subprocess.run([sys.executable, '-m', 'pip', 'install', '-e', '.[ml]', '-q'], check=True)
 subprocess.run([sys.executable, '-m', 'pip', 'install', 'loguru', '-q'], check=True)
 
 # Verify imports
+sys.path.insert(0, PROJECT)
 from aphelion.intelligence.hydra.ensemble import HydraGate, EnsembleConfig
 from aphelion.intelligence.hydra.trainer import HydraTrainer, TrainerConfig
 from aphelion.intelligence.hydra.tft import TFTConfig
@@ -141,10 +146,10 @@ print("  All imports OK ✓")
 print()
 
 # ═══════════════════════════════════════════════════════════════
-#  PHASE 4: MOUNT GOOGLE DRIVE (auto-save checkpoints)
+#  PHASE 5: MOUNT GOOGLE DRIVE (auto-save checkpoints)
 # ═══════════════════════════════════════════════════════════════
 print("=" * 70)
-print("  PHASE 4: MOUNTING GOOGLE DRIVE FOR AUTO-SAVE")
+print("  PHASE 5: MOUNTING GOOGLE DRIVE FOR AUTO-SAVE")
 print("=" * 70)
 
 from google.colab import drive
@@ -156,19 +161,17 @@ print(f"  Checkpoints will auto-save to: {DRIVE_SAVE}")
 print()
 
 # ═══════════════════════════════════════════════════════════════
-#  PHASE 5: VERIFY DATA
+#  PHASE 6: VERIFY DATA
 # ═══════════════════════════════════════════════════════════════
 print("=" * 70)
-print("  PHASE 5: DATA VERIFICATION")
+print("  PHASE 6: DATA VERIFICATION")
 print("=" * 70)
 
+import pandas as pd
 data_dir = 'data/bars'
-assert os.path.exists(data_dir), f"{data_dir} not found! Include data/bars in the zip."
-
 csv_files = sorted([f for f in os.listdir(data_dir) if f.endswith('.csv') and 'tick' not in f])
 total_bars = 0
 for f in csv_files:
-    import pandas as pd
     path = os.path.join(data_dir, f)
     rows = len(pd.read_csv(path))
     total_bars += rows
@@ -324,10 +327,10 @@ def run_one_round(data_file, max_epochs, tag, description):
 
 
 # ═══════════════════════════════════════════════════════════════
-#  PHASE 6: EXECUTE ALL TRAINING ROUNDS
+#  PHASE 7: EXECUTE ALL TRAINING ROUNDS
 # ═══════════════════════════════════════════════════════════════
 print("=" * 70)
-print("  PHASE 6: STARTING 8-HOUR TRAINING MARATHON")
+print("  PHASE 7: STARTING 8-HOUR TRAINING MARATHON")
 print(f"  Total time budget: {format_time(MAX_RUNTIME)}")
 print(f"  Training rounds: {len(TRAINING_ROUNDS)}")
 print(f"  Auto-saving to Google Drive every checkpoint")
@@ -350,7 +353,7 @@ for i, (data_file, epochs, tag, desc) in enumerate(TRAINING_ROUNDS):
         break
 
 # ═══════════════════════════════════════════════════════════════
-#  PHASE 7: FINAL SUMMARY
+#  PHASE 8: FINAL SUMMARY
 # ═══════════════════════════════════════════════════════════════
 total_elapsed = time.time() - START_TIME
 
