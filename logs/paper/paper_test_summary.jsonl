@@ -121,3 +121,6 @@
 {"ts": "2026-03-10T01:39:10.612919+00:00", "session": "test_summary", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_summary", "ledger_path": "logs\\paper\\paper_test_summary.jsonl"}}
 {"ts": "2026-03-10T01:39:10.613096+00:00", "session": "test_summary", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
 {"ts": "2026-03-10T01:39:10.622465+00:00", "session": "test_summary", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 10, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0, "ares_vetoes": 0, "ares_decisions": 0}}
+{"ts": "2026-03-10T02:46:52.025642+00:00", "session": "test_summary", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_summary", "ledger_path": "logs\\paper\\paper_test_summary.jsonl"}}
+{"ts": "2026-03-10T02:46:52.025862+00:00", "session": "test_summary", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
+{"ts": "2026-03-10T02:46:52.037353+00:00", "session": "test_summary", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 10, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0, "ares_vetoes": 0, "ares_decisions": 0}}
