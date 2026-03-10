@@ -1,11 +1,12 @@
 """
 APHELION HYDRA Training Script (Phase 7)
-Generates synthetic OHLCV data with regime patterns, trains the full ensemble,
-and validates the pipeline end-to-end.
+Trains the full ensemble on synthetic OR real market data.
 
 Usage:
-    python scripts/train_hydra.py             # Quick validation (500 bars, 2 epochs)
-    python scripts/train_hydra.py --full      # Full synthetic (10000 bars, 20 epochs)
+    python scripts/train_hydra.py                              # Quick validation (synthetic, 500 bars, 2 epochs)
+    python scripts/train_hydra.py --full                       # Full synthetic (10000 bars, 20 epochs)
+    python scripts/train_hydra.py --data data/bars/xauusd_m1.csv --full   # Real data from MT5 export
+    python scripts/train_hydra.py --data data/bars/xauusd_m1.csv --epochs 50 --batch-size 64
 """
 
 from __future__ import annotations
@@ -31,6 +32,8 @@ from aphelion.intelligence.hydra.tft import TFTConfig
 from aphelion.intelligence.hydra.lstm import LSTMConfig
 from aphelion.intelligence.hydra.cnn import CNNConfig
 from aphelion.intelligence.hydra.moe import MoEConfig
+from aphelion.intelligence.hydra.tcn import TCNConfig
+from aphelion.intelligence.hydra.transformer import TransformerConfig
 from aphelion.intelligence.hydra.trainer import HydraTrainer, TrainerConfig
 
 
@@ -118,27 +121,153 @@ def generate_synthetic_data(n_bars: int = 10000) -> pd.DataFrame:
     return df
 
 
+def load_real_data(csv_path: str) -> pd.DataFrame:
+    """
+    Load real OHLCV data from a CSV exported by export_mt5_data.py.
+    Computes the same features that generate_synthetic_data produces
+    so the dataset pipeline can consume it identically.
+    """
+    logger.info(f"Loading real market data from {csv_path}...")
+    df = pd.read_csv(csv_path)
+
+    # Normalise column names to lowercase
+    df.columns = [c.strip().lower() for c in df.columns]
+
+    required = {"open", "high", "low", "close", "volume"}
+    missing = required - set(df.columns)
+    if missing:
+        raise ValueError(f"CSV missing required columns: {missing}")
+
+    # Drop rows with NaN prices
+    df = df.dropna(subset=["open", "high", "low", "close"]).reset_index(drop=True)
+    n_bars = len(df)
+    logger.info(f"Loaded {n_bars:,} bars — price range {df['close'].min():.2f} to {df['close'].max():.2f}")
+
+    # ── Derive session & day_of_week if a timestamp column exists ──
+    if "timestamp" in df.columns:
+        ts = pd.to_datetime(df["timestamp"], utc=True)
+        hours = ts.dt.hour
+        # Map UTC hour → session
+        def _hour_to_session(h):
+            if h < 8:
+                return "ASIAN"
+            elif h < 12:
+                return "LONDON"
+            elif h < 16:
+                return "OVERLAP_LDN_NY"
+            elif h < 21:
+                return "NEW_YORK"
+            else:
+                return "DEAD_ZONE"
+
+        df["session"] = hours.map(_hour_to_session)
+        day_map = {0: "MON", 1: "TUE", 2: "WED", 3: "THU", 4: "FRI", 5: "SAT", 6: "SUN"}
+        df["day_of_week"] = ts.dt.dayofweek.map(day_map)
+    else:
+        sessions = ["ASIAN", "LONDON", "OVERLAP_LDN_NY", "NEW_YORK", "DEAD_ZONE"]
+        days = ["MON", "TUE", "WED", "THU", "FRI"]
+        df["session"] = [sessions[i % len(sessions)] for i in range(n_bars)]
+        df["day_of_week"] = [days[(i // (24 * 60)) % len(days)] for i in range(n_bars)]
+
+    # ── Compute technical features from OHLCV ──
+    close = df["close"].values.astype(np.float64)
+    high = df["high"].values.astype(np.float64)
+    low = df["low"].values.astype(np.float64)
+    volume = df["volume"].values.astype(np.float64)
+
+    # ATR (14-period)
+    tr = np.maximum(high - low, np.maximum(np.abs(high - np.roll(close, 1)), np.abs(low - np.roll(close, 1))))
+    tr[0] = high[0] - low[0]
+    atr = pd.Series(tr).rolling(14, min_periods=1).mean().values
+
+    # RSI (14-period)
+    delta = np.diff(close, prepend=close[0])
+    gain = np.where(delta > 0, delta, 0.0)
+    loss = np.where(delta < 0, -delta, 0.0)
+    avg_gain = pd.Series(gain).ewm(span=14, min_periods=1).mean().values
+    avg_loss = pd.Series(loss).ewm(span=14, min_periods=1).mean().values
+    rs = np.where(avg_loss > 0, avg_gain / avg_loss, 100.0)
+    rsi = 100.0 - 100.0 / (1.0 + rs)
+
+    # Bollinger Band width
+    sma20 = pd.Series(close).rolling(20, min_periods=1).mean().values
+    std20 = pd.Series(close).rolling(20, min_periods=1).std().values
+    std20[std20 < 1e-8] = 1e-8
+    bb_width = (2 * std20) / sma20 * 100
+
+    # EMAs
+    ema20 = pd.Series(close).ewm(span=20, min_periods=1).mean().values
+    ema50 = pd.Series(close).ewm(span=50, min_periods=1).mean().values
+
+    # VWAP (session-level approximation using cumulative)
+    cum_vol = np.cumsum(volume)
+    cum_pv = np.cumsum(close * volume)
+    vwap = np.where(cum_vol > 0, cum_pv / cum_vol, close)
+
+    # Cumulative delta (simple approximation from bar direction)
+    bar_delta = np.where(close > np.roll(close, 1), volume, -volume)
+    bar_delta[0] = 0
+    cum_delta = np.cumsum(bar_delta)
+
+    # Assign computed features
+    df["atr"] = atr
+    df["rsi"] = rsi
+    df["bb_width"] = bb_width
+    df["bb_percentile"] = (close - (sma20 - std20)) / (2 * std20)
+    df["ema_20"] = ema20
+    df["ema_50"] = ema50
+    df["ema_cross"] = (ema20 - ema50) / atr
+    df["vwap"] = vwap
+    df["price_vs_vwap"] = (close - vwap) / atr
+    df["vwap_upper_1"] = vwap + std20
+    df["vwap_lower_1"] = vwap - std20
+    df["vwap_upper_2"] = vwap + 2 * std20
+    df["vwap_lower_2"] = vwap - 2 * std20
+    df["volume_delta"] = bar_delta
+    df["cumulative_delta"] = cum_delta
+    df["mtf_alignment_score"] = 0.0
+    df["mtf_weighted_alignment"] = 0.0
+    df["max_spread_zscore"] = 0.0
+
+    # Fill remaining CONTINUOUS_FEATURES with 0 if not present
+    for feat in CONTINUOUS_FEATURES:
+        if feat not in df.columns:
+            df[feat] = 0.0
+
+    return df
+
+
 def build_small_ensemble_config() -> EnsembleConfig:
     """Small model config for fast CPU-only validation."""
     return EnsembleConfig(
         tft_config=TFTConfig(hidden_dim=32, lstm_layers=1, attention_heads=2),
-        lstm_config=LSTMConfig(hidden_size=32, num_layers=1),
-        cnn_config=CNNConfig(hidden_size=32),
-        moe_config=MoEConfig(hidden_size=32),
+        lstm_config=LSTMConfig(hidden_size=32, num_layers=1, n_attention_heads=2),
+        cnn_config=CNNConfig(hidden_size=32, channels=(16, 32, 64, 128)),
+        moe_config=MoEConfig(hidden_size=32, expert_hidden_size=48, num_experts=4, top_k=2),
+        tcn_config=TCNConfig(hidden_size=32, num_channels=[16, 32, 32]),
+        transformer_config=TransformerConfig(hidden_size=32, n_heads=2, n_layers=2, dim_feedforward=64),
         gate_hidden_size=32,
+        gate_n_heads=2,
+        gate_n_interaction_layers=1,
+        model_dropout=0.0,
         dropout=0.1,
     )
 
 
 def build_full_ensemble_config() -> EnsembleConfig:
-    """Full-size model config for GPU training."""
+    """SUPER INSANE full-size model config for GPU training."""
     return EnsembleConfig(
-        tft_config=TFTConfig(hidden_dim=256, lstm_layers=2, attention_heads=4),
-        lstm_config=LSTMConfig(hidden_size=128, num_layers=2),
-        cnn_config=CNNConfig(hidden_size=128),
-        moe_config=MoEConfig(hidden_size=128),
-        gate_hidden_size=256,
-        dropout=0.2,
+        tft_config=TFTConfig(hidden_dim=512, lstm_layers=4, attention_heads=8),
+        lstm_config=LSTMConfig(hidden_size=384, num_layers=4, n_attention_heads=8),
+        cnn_config=CNNConfig(hidden_size=384, channels=(64, 128, 256, 512)),
+        moe_config=MoEConfig(hidden_size=384, expert_hidden_size=512, num_experts=8, top_k=2),
+        tcn_config=TCNConfig(hidden_size=384, num_channels=[64, 128, 128, 256, 256, 512]),
+        transformer_config=TransformerConfig(hidden_size=384, n_heads=8, n_layers=8, dim_feedforward=1536),
+        gate_hidden_size=512,
+        gate_n_heads=8,
+        gate_n_interaction_layers=2,
+        model_dropout=0.1,
+        dropout=0.15,
     )
 
 
@@ -148,17 +277,28 @@ def run_training(
     batch_size: int = 32,
     full_model: bool = False,
     checkpoint_dir: str = "models/hydra",
+    data_csv: str = "",
 ) -> dict:
     """
     Run the full training pipeline.
+
+    Args:
+        data_csv: Path to a CSV with real OHLCV data. If empty, uses synthetic data.
 
     Returns:
         Training result metrics dict.
     """
     t0 = time.time()
 
-    # 1. Generate data
-    df = generate_synthetic_data(n_bars)
+    # 1. Load data — real CSV or synthetic
+    if data_csv:
+        df = load_real_data(data_csv)
+        n_bars = len(df)
+        logger.info(f"Using REAL data: {n_bars:,} bars from {data_csv}")
+    else:
+        df = generate_synthetic_data(n_bars)
+        logger.info(f"Using SYNTHETIC data: {n_bars:,} bars")
+
     feature_dicts = df.to_dict(orient="records")
     close_prices = df["close"].values
 
@@ -190,12 +330,17 @@ def run_training(
 
     trainer_config = TrainerConfig(
         max_epochs=max_epochs,
-        learning_rate=5e-4 if full_model else 1e-3,
+        learning_rate=3e-4 if full_model else 1e-3,
         use_amp=(device == "cuda"),
         ensemble_config=ens_config,
         checkpoint_dir=checkpoint_dir,
         save_every_n_epochs=max(1, max_epochs // 5),
         patience=max(5, max_epochs // 3),
+        warmup_epochs=10 if full_model else 0,
+        gradient_accumulation_steps=4 if full_model else 1,
+        mixup_alpha=0.2 if full_model else 0.0,
+        swa_start_epoch=max(max_epochs - 50, max_epochs * 2) if full_model else 9999,
+        label_smoothing=0.1 if full_model else 0.0,
     )
     trainer = HydraTrainer(trainer_config, device=device)
 
@@ -217,7 +362,8 @@ def run_training(
 def main():
     parser = argparse.ArgumentParser(description="APHELION HYDRA Training")
     parser.add_argument("--full", action="store_true", help="Full training (10K bars, 20 epochs)")
-    parser.add_argument("--bars", type=int, default=None, help="Override bar count")
+    parser.add_argument("--data", type=str, default="", help="Path to real OHLCV CSV (from export_mt5_data.py)")
+    parser.add_argument("--bars", type=int, default=None, help="Override bar count (synthetic only)")
     parser.add_argument("--epochs", type=int, default=None, help="Override epoch count")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
     parser.add_argument("--checkpoint-dir", type=str, default="models/hydra", help="Checkpoint dir")
@@ -238,6 +384,7 @@ def main():
         batch_size=args.batch_size,
         full_model=full_model,
         checkpoint_dir=args.checkpoint_dir,
+        data_csv=args.data,
     )
 
     if "error" not in results:

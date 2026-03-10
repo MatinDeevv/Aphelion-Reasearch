@@ -192,8 +192,9 @@ class TestTCN:
         cont = torch.randn(4, 16, cfg.input_size)
         cat = torch.randint(0, 5, (4, 16, 2))
         out = model(cont, cat)
-        assert out["aux_logits"].shape[0] == 4
-        assert out["aux_logits"].shape[-1] == 3
+        assert isinstance(out["aux_logits"], list)
+        assert len(out["aux_logits"]) == 3  # 3 horizons
+        assert out["aux_logits"][0].shape == (4, 3)  # (batch, n_classes)
 
 
 @pytest.mark.skipif(not HAS_TORCH, reason="torch not installed")
@@ -216,5 +217,6 @@ class TestTransformer:
         cont = torch.randn(3, 16, cfg.input_size)
         cat = torch.randint(0, 5, (3, 16, 2))
         out = model(cont, cat)
-        assert out["aux_logits"].shape[0] == 3
-        assert out["aux_logits"].shape[-1] == 3
+        assert isinstance(out["aux_logits"], list)
+        assert len(out["aux_logits"]) == 3  # 3 horizons
+        assert out["aux_logits"][0].shape == (3, 3)  # (batch, n_classes)

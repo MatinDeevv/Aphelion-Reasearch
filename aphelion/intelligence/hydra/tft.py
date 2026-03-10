@@ -1,6 +1,7 @@
 """
-APHELION HYDRA — Temporal Fusion Transformer
+APHELION HYDRA — Temporal Fusion Transformer (SUPER INSANE Edition)
 Full TFT implementation for multi-horizon XAU/USD direction prediction.
+Scaled up: 512 hidden, 8 attention heads, 4-layer LSTM, deeper GRN/FF.
 Architecture: VSN → GRN → LSTM encoder → Interpretable Multi-Head Attention → Output heads
 
 Outputs per bar:
@@ -31,26 +32,26 @@ from aphelion.intelligence.hydra.dataset import CONTINUOUS_FEATURES, CATEGORICAL
 
 @dataclass
 class TFTConfig:
-    """Temporal Fusion Transformer hyperparameters."""
+    """Temporal Fusion Transformer — SUPER INSANE defaults."""
     # Input dimensions
     n_continuous: int = len(CONTINUOUS_FEATURES)
     n_categorical: int = len(CATEGORICAL_FEATURES)
-    cat_embedding_dims: list[int] = field(default_factory=lambda: [8, 8])  # per-cat embedding size
-    cat_cardinalities: list[int] = field(default_factory=lambda: [5, 7])   # session(5), day(7)
+    cat_embedding_dims: list[int] = field(default_factory=lambda: [16, 16])  # Wider embeddings
+    cat_cardinalities: list[int] = field(default_factory=lambda: [5, 7])
 
-    # Model dimensions
-    hidden_dim: int = 256
-    lstm_layers: int = 2
-    attention_heads: int = 4
+    # SUPER INSANE model dimensions
+    hidden_dim: int = 512
+    lstm_layers: int = 4
+    attention_heads: int = 8
     dropout: float = 0.1
 
     # Sequence
     lookback: int = 64
 
     # Outputs
-    n_horizons: int = 3               # 5m, 15m, 1h
-    n_classes: int = 3                # SHORT, FLAT, LONG
-    n_quantiles: int = 3              # P10, P50, P90
+    n_horizons: int = 3
+    n_classes: int = 3
+    n_quantiles: int = 3
     quantile_targets: list[float] = field(default_factory=lambda: [0.1, 0.5, 0.9])
 
 
@@ -338,20 +339,27 @@ if HAS_TORCH:
             )
 
             # ── Output Heads ──────────────────────────────────────────────
-            # Classification: 3 classes per horizon
+            # Deep classification: 3 classes per horizon
             self.classification_heads = nn.ModuleList([
                 nn.Sequential(
                     nn.Linear(cfg.hidden_dim, cfg.hidden_dim // 2),
-                    nn.ReLU(),
+                    nn.GELU(),
                     nn.Dropout(cfg.dropout),
-                    nn.Linear(cfg.hidden_dim // 2, cfg.n_classes),
+                    nn.Linear(cfg.hidden_dim // 2, cfg.hidden_dim // 4),
+                    nn.GELU(),
+                    nn.Dropout(cfg.dropout),
+                    nn.Linear(cfg.hidden_dim // 4, cfg.n_classes),
                 )
                 for _ in range(cfg.n_horizons)
             ])
 
-            # Quantile regression: 3 quantiles per horizon
+            # Deep quantile regression: 3 quantiles per horizon
             self.quantile_heads = nn.ModuleList([
-                nn.Linear(cfg.hidden_dim, cfg.n_quantiles)
+                nn.Sequential(
+                    nn.Linear(cfg.hidden_dim, cfg.hidden_dim // 4),
+                    nn.GELU(),
+                    nn.Linear(cfg.hidden_dim // 4, cfg.n_quantiles),
+                )
                 for _ in range(cfg.n_horizons)
             ])
 

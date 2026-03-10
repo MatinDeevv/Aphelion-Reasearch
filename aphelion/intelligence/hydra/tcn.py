@@ -1,6 +1,8 @@
 """
-APHELION HYDRA — Temporal Convolutional Network (Phase 7 v2)
-Long-range temporal dependencies via dilated causal convolutions.
+APHELION HYDRA — Temporal Convolutional Network (SUPER INSANE Edition)
+Deep dilated causal convolutions with Gated Activations, Weight Normalization,
+Dense Skip Connections, and Channel Attention.
+Massive receptive field for long-range temporal dependency capture.
 """
 
 from __future__ import annotations
@@ -22,59 +24,98 @@ except ImportError:
 @dataclass
 class TCNConfig:
     input_size: int = len(CONTINUOUS_FEATURES)
-    hidden_size: int = 128
+    hidden_size: int = 384
     num_channels: list[int] = None  # Channel sizes per layer
     kernel_size: int = 3
-    dropout: float = 0.2
+    dropout: float = 0.15
     n_classes: int = 3
     n_horizons: int = 3
     sequence_length: int = 512
 
     def __post_init__(self):
         if self.num_channels is None:
-            self.num_channels = [64, 128, 128, 256]
+            self.num_channels = [64, 128, 128, 256, 256, 512]
 
 
 if HAS_TORCH:
-    class CausalConv1d(nn.Module):
-        """Causal convolution with left-padding to prevent future leakage."""
+    class GatedCausalConv1d(nn.Module):
+        """Gated causal convolution — learned gating controls information flow."""
 
         def __init__(self, in_channels: int, out_channels: int,
-                     kernel_size: int, dilation: int, dropout: float = 0.2):
+                     kernel_size: int, dilation: int, dropout: float = 0.15):
             super().__init__()
             self.padding = (kernel_size - 1) * dilation
-            self.conv = nn.Conv1d(in_channels, out_channels, kernel_size,
-                                  dilation=dilation)
+            # Signal path
+            self.conv_signal = nn.utils.parametrizations.weight_norm(
+                nn.Conv1d(in_channels, out_channels, kernel_size, dilation=dilation)
+            )
+            # Gate path
+            self.conv_gate = nn.utils.parametrizations.weight_norm(
+                nn.Conv1d(in_channels, out_channels, kernel_size, dilation=dilation)
+            )
             self.bn = nn.BatchNorm1d(out_channels)
             self.dropout = nn.Dropout(dropout)
-            self.relu = nn.ReLU()
 
         def forward(self, x: torch.Tensor) -> torch.Tensor:
-            x = F.pad(x, (self.padding, 0))
-            x = self.conv(x)
-            x = self.bn(x)
-            x = self.relu(x)
-            x = self.dropout(x)
-            return x
+            x_padded = F.pad(x, (self.padding, 0))
+            signal = torch.tanh(self.conv_signal(x_padded))
+            gate = torch.sigmoid(self.conv_gate(x_padded))
+            out = signal * gate  # Gated activation
+            out = self.bn(out)
+            out = self.dropout(out)
+            return out
 
-    class TemporalBlock(nn.Module):
-        """Residual block with two causal dilated convolutions."""
+    class DenseTemporalBlock(nn.Module):
+        """Residual block with gated causal convolutions and skip connection output."""
 
         def __init__(self, in_ch: int, out_ch: int,
                      kernel_size: int, dilation: int, dropout: float):
             super().__init__()
-            self.conv1 = CausalConv1d(in_ch, out_ch, kernel_size, dilation, dropout)
-            self.conv2 = CausalConv1d(out_ch, out_ch, kernel_size, dilation, dropout)
+            self.conv1 = GatedCausalConv1d(in_ch, out_ch, kernel_size, dilation, dropout)
+            self.conv2 = GatedCausalConv1d(out_ch, out_ch, kernel_size, dilation, dropout)
             self.downsample = nn.Conv1d(in_ch, out_ch, 1) if in_ch != out_ch else None
 
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            # 1x1 skip connection projection
+            self.skip_proj = nn.Conv1d(out_ch, out_ch, 1)
+
+        def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
             residual = x if self.downsample is None else self.downsample(x)
             out = self.conv1(x)
             out = self.conv2(out)
-            return F.relu(out + residual)
+            skip = self.skip_proj(out)
+            return F.gelu(out + residual), skip
+
+    class ChannelAttention1D(nn.Module):
+        """Channel attention for temporal features."""
+
+        def __init__(self, channels: int, reduction: int = 16):
+            super().__init__()
+            mid = max(channels // reduction, 8)
+            self.avg_pool = nn.AdaptiveAvgPool1d(1)
+            self.max_pool = nn.AdaptiveMaxPool1d(1)
+            self.fc = nn.Sequential(
+                nn.Linear(channels * 2, mid),
+                nn.GELU(),
+                nn.Linear(mid, channels),
+                nn.Sigmoid(),
+            )
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            avg = self.avg_pool(x).squeeze(-1)
+            mx = self.max_pool(x).squeeze(-1)
+            scale = self.fc(torch.cat([avg, mx], dim=-1)).unsqueeze(-1)
+            return x * scale
 
     class HydraTCN(nn.Module):
-        """Temporal Convolutional Network for HYDRA ensemble."""
+        """
+        SUPER INSANE Temporal Convolutional Network.
+        - 6-layer deep TCN with exponentially growing receptive field
+        - Gated activations (tanh * sigmoid) for controlled information flow
+        - Weight normalization for training stability
+        - Dense skip connections aggregated for final prediction
+        - Channel attention for feature refinement
+        - Multi-scale temporal pooling
+        """
 
         def __init__(self, config: Optional[TCNConfig] = None):
             super().__init__()
@@ -83,37 +124,87 @@ if HAS_TORCH:
 
             self.input_proj = nn.Linear(cfg.input_size, cfg.num_channels[0])
 
-            layers = []
+            # Build layers with exponentially increasing dilation
+            self.layers = nn.ModuleList()
             channels = cfg.num_channels
             for i in range(len(channels)):
                 in_ch = channels[i - 1] if i > 0 else channels[0]
                 out_ch = channels[i]
                 dilation = 2 ** i
-                layers.append(TemporalBlock(in_ch, out_ch, cfg.kernel_size, dilation, cfg.dropout))
-            self.network = nn.Sequential(*layers)
+                self.layers.append(DenseTemporalBlock(
+                    in_ch, out_ch, cfg.kernel_size, dilation, cfg.dropout,
+                ))
 
-            self.latent_proj = nn.Linear(channels[-1], cfg.hidden_size)
+            # Aggregate all skip connections
+            total_skip = sum(channels)
+            self.skip_aggregate = nn.Sequential(
+                nn.Conv1d(total_skip, channels[-1], 1),
+                nn.GELU(),
+                nn.BatchNorm1d(channels[-1]),
+            )
 
-            self.aux_head = nn.Linear(cfg.hidden_size, cfg.n_classes * cfg.n_horizons)
+            # Channel attention
+            self.channel_attn = ChannelAttention1D(channels[-1])
+
+            # Multi-scale temporal pooling
+            self.avg_pool = nn.AdaptiveAvgPool1d(1)
+            self.max_pool = nn.AdaptiveMaxPool1d(1)
+
+            # Final projection
+            self.latent_proj = nn.Sequential(
+                nn.Linear(channels[-1] * 2, cfg.hidden_size),
+                nn.GELU(),
+                nn.Dropout(cfg.dropout),
+                nn.LayerNorm(cfg.hidden_size),
+            )
+
+            # Deep auxiliary heads
+            self.aux_head = nn.Sequential(
+                nn.Linear(cfg.hidden_size, cfg.hidden_size // 2),
+                nn.GELU(),
+                nn.Dropout(cfg.dropout),
+                nn.Linear(cfg.hidden_size // 2, cfg.n_classes * cfg.n_horizons),
+            )
             self._n_classes = cfg.n_classes
             self._n_horizons = cfg.n_horizons
 
         def forward(self, cont_inputs: torch.Tensor,
                     cat_inputs: torch.Tensor) -> dict[str, torch.Tensor]:
-            # cont_inputs: (batch, seq, features)
-            x = self.input_proj(cont_inputs)  # (batch, seq, channels[0])
-            x = x.transpose(1, 2)  # (batch, channels, seq) for Conv1d
-            x = self.network(x)
-            x = x[:, :, -1]  # Take last time step: (batch, channels[-1])
+            x = self.input_proj(cont_inputs)
+            x = x.transpose(1, 2)  # (batch, channels, seq)
 
-            latent = self.latent_proj(x)  # (batch, hidden_size)
+            # Forward through layers, collecting skip connections
+            skips = []
+            for layer in self.layers:
+                x, skip = layer(x)
+                skips.append(skip)
 
+            # Align skip connection lengths to the shortest
+            min_len = min(s.size(-1) for s in skips)
+            skips_aligned = [s[:, :, -min_len:] for s in skips]
+
+            # Aggregate skips
+            skip_cat = torch.cat(skips_aligned, dim=1)
+            aggregated = self.skip_aggregate(skip_cat)
+
+            # Channel attention
+            aggregated = self.channel_attn(aggregated)
+
+            # Dual pooling
+            avg = self.avg_pool(aggregated).squeeze(-1)
+            mx = self.max_pool(aggregated).squeeze(-1)
+            pooled = torch.cat([avg, mx], dim=-1)
+
+            # Project to latent
+            latent = self.latent_proj(pooled)
+
+            # Auxiliary heads
             aux = self.aux_head(latent)
             aux = aux.view(-1, self._n_horizons, self._n_classes)
 
             return {
                 "latent": latent,
-                "aux_logits": aux[:, 0, :],
+                "aux_logits": [aux[:, h, :] for h in range(self._n_horizons)],
                 "aux_logits_all": aux,
             }
 

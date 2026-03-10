@@ -9,15 +9,22 @@ from aphelion.intelligence.hydra.tft import TFTConfig
 from aphelion.intelligence.hydra.lstm import LSTMConfig
 from aphelion.intelligence.hydra.cnn import CNNConfig
 from aphelion.intelligence.hydra.moe import MoEConfig
+from aphelion.intelligence.hydra.tcn import TCNConfig
+from aphelion.intelligence.hydra.transformer import TransformerConfig
 
 
 def _small_config():
     return EnsembleConfig(
         tft_config=TFTConfig(hidden_dim=32, lstm_layers=1, attention_heads=2),
-        lstm_config=LSTMConfig(hidden_size=32, num_layers=1),
-        cnn_config=CNNConfig(hidden_size=32),
-        moe_config=MoEConfig(hidden_size=32),
+        lstm_config=LSTMConfig(hidden_size=32, num_layers=1, n_attention_heads=2),
+        cnn_config=CNNConfig(hidden_size=32, channels=(16, 32, 64, 128)),
+        moe_config=MoEConfig(hidden_size=32, expert_hidden_size=48, num_experts=4, top_k=2),
+        tcn_config=TCNConfig(hidden_size=32, num_channels=[16, 32, 32]),
+        transformer_config=TransformerConfig(hidden_size=32, n_heads=2, n_layers=2, dim_feedforward=64),
         gate_hidden_size=32,
+        gate_n_heads=2,
+        gate_n_interaction_layers=1,
+        model_dropout=0.0,       # Disable for deterministic tests
         dropout=0.1,
     )
 
@@ -58,14 +65,45 @@ class TestHydraEnsemble:
 
     def test_ensemble_gate_attention_weights(self):
         model = HydraGate(_small_config())
+        model.eval()  # Disable dropout for clean attention sums
+        cont, cat = _make_batch(4, 32)
+        with torch.no_grad():
+            out = model(cont, cat)
+        gate_w = out["gate_attention_weights"]
+        # Shape: (batch, n_queries, n_models) — 4 queries (3 horizons + global), 6 sub-models
+        assert gate_w.shape == (4, 4, 6)
+        # Attention weights sum to 1 over models dimension
+        sums = gate_w.sum(dim=-1)
+        assert torch.allclose(sums, torch.ones_like(sums), atol=1e-4)
+
+    def test_ensemble_confidence_output(self):
+        model = HydraGate(_small_config())
         cont, cat = _make_batch(4, 32)
         out = model(cont, cat)
-        gate_w = out["gate_attention_weights"]
-        # Shape: (batch, 1, 6) for 6 sub-models (TFT, LSTM, CNN, MoE, TCN, Transformer)
-        assert gate_w.shape == (4, 1, 6)
-        # Softmax weights sum to 1
-        sums = gate_w.sum(dim=-1)
-        assert torch.allclose(sums, torch.ones_like(sums), atol=1e-5)
+        assert "confidence" in out
+        assert out["confidence"].shape == (4, 1)
+        # Confidence should be in [0, 1] (sigmoid)
+        assert (out["confidence"] >= 0).all()
+        assert (out["confidence"] <= 1).all()
+
+    def test_ensemble_moe_load_balance_loss(self):
+        model = HydraGate(_small_config())
+        cont, cat = _make_batch(4, 32)
+        out = model(cont, cat)
+        assert "moe_load_balance_loss" in out
+        assert out["moe_load_balance_loss"].ndim == 0  # scalar
+
+    def test_ensemble_all_aux_logits_present(self):
+        model = HydraGate(_small_config())
+        cont, cat = _make_batch(4, 32)
+        out = model(cont, cat)
+        for key in ["tft_logits", "lstm_logits", "cnn_logits", "moe_logits",
+                     "tcn_logits", "transformer_logits"]:
+            assert key in out, f"Missing aux logits: {key}"
+            logits = out[key]
+            assert len(logits) == 3, f"{key} should have 3 horizon logits"
+            for l in logits:
+                assert l.shape == (4, 3), f"{key} logits wrong shape"
 
     def test_trainer_runs_one_epoch_no_exception(self):
         from torch.utils.data import TensorDataset, DataLoader
@@ -89,10 +127,13 @@ class TestHydraEnsemble:
         cfg = TrainerConfig(
             max_epochs=1,
             use_amp=False,
+            warmup_epochs=0,
+            gradient_accumulation_steps=1,  # No accum for fast test
+            mixup_alpha=0.0,                # No mixup for fast test
+            swa_start_epoch=999,            # Disable SWA for test
             ensemble_config=_small_config(),
         )
         trainer = HydraTrainer(cfg, device="cpu")
-        # Just run 1 training epoch
         trainer._model.train()
         metrics = trainer._train_epoch(loader)
         assert "loss" in metrics
@@ -123,6 +164,10 @@ class TestHydraEnsemble:
             max_epochs=10,
             use_amp=False,
             learning_rate=1e-3,
+            warmup_epochs=0,
+            gradient_accumulation_steps=1,
+            mixup_alpha=0.0,
+            swa_start_epoch=999,
             ensemble_config=_small_config(),
         )
         trainer = HydraTrainer(cfg, device="cpu")

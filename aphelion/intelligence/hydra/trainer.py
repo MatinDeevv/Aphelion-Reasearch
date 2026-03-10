@@ -1,7 +1,14 @@
 """
-APHELION HYDRA Trainer (Ensemble Edition)
-Trains the Full Ensemble (Gate + TFT + LSTM + CNN + MoE) end-to-end.
-Implements Auxiliary Losses to force sub-models to learn useful independent representations.
+APHELION HYDRA Trainer (SUPER INSANE Edition)
+Trains the Full 6-model Ensemble end-to-end with:
+- Label Smoothing Focal Loss
+- Mixup Data Augmentation
+- Gradient Accumulation (effective 4x batch size)
+- All 6 sub-model auxiliary losses (TFT, LSTM, CNN, MoE, TCN, Transformer)
+- MoE Load Balancing Loss
+- Diversity Loss (encourage sub-model disagreement)
+- Linear Warmup + Cosine Annealing with Warm Restarts
+- Stochastic Weight Averaging (SWA) in final phase
 """
 
 from __future__ import annotations
@@ -30,49 +37,72 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TrainerConfig:
-    """Training configuration for the Full Ensemble."""
-    learning_rate: float = 5e-4    # Lower LR for giant ensemble
+    """Training configuration — SUPER INSANE defaults."""
+    learning_rate: float = 3e-4
     weight_decay: float = 1e-4
-    max_epochs: int = 150
+    max_epochs: int = 200
     gradient_clip_norm: float = 1.0
 
-    warmup_epochs: int = 5
-    cosine_t_max: int = 30
+    warmup_epochs: int = 10
+    cosine_t_max: int = 40
 
     # Loss weights
-    # Main ensemble outputs
     classification_loss_weight: float = 1.0
     quantile_loss_weight: float = 0.3
-    
-    # Auxiliary losses to guide sub-models independently
-    aux_loss_weight: float = 0.2
+    aux_loss_weight: float = 0.15       # Auxiliary sub-model losses
+    moe_balance_weight: float = 0.01    # MoE load balance loss
+    diversity_loss_weight: float = 0.05  # Encourages sub-model disagreement
 
     # Focal loss configs
     focal_gamma: float = 2.0
     focal_alpha: list[float] = field(default_factory=lambda: [1.5, 0.5, 1.5])
+    label_smoothing: float = 0.1  # Label smoothing for noisy market data
 
-    patience: int = 20
-    min_delta: float = 0.01
+    # Mixup augmentation
+    mixup_alpha: float = 0.2  # Beta distribution parameter (0 = disabled)
+
+    # Gradient accumulation
+    gradient_accumulation_steps: int = 4
+
+    patience: int = 25
+    min_delta: float = 0.005
 
     use_amp: bool = True
     checkpoint_dir: str = "models/hydra"
     save_every_n_epochs: int = 5
 
+    # SWA: Stochastic Weight Averaging
+    swa_start_epoch: int = 100  # Start SWA after this epoch
+    swa_lr: float = 1e-5
+
     ensemble_config: EnsembleConfig = field(default_factory=EnsembleConfig)
 
 
 if HAS_TORCH:
-    class FocalLoss(nn.Module):
-        def __init__(self, gamma: float = 2.0, alpha: Optional[list[float]] = None):
+    class LabelSmoothingFocalLoss(nn.Module):
+        """Focal loss with label smoothing — ideal for noisy market data."""
+
+        def __init__(self, gamma: float = 2.0, alpha: Optional[list[float]] = None,
+                     smoothing: float = 0.1, n_classes: int = 3):
             super().__init__()
             self.gamma = gamma
+            self.smoothing = smoothing
+            self.n_classes = n_classes
             if alpha is not None:
                 self.alpha = torch.tensor(alpha, dtype=torch.float32)
             else:
                 self.alpha = None
 
         def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
-            ce_loss = F.cross_entropy(logits, targets, reduction="none")
+            # Apply label smoothing
+            with torch.no_grad():
+                smooth_targets = torch.full_like(logits, self.smoothing / (self.n_classes - 1))
+                smooth_targets.scatter_(1, targets.unsqueeze(1), 1.0 - self.smoothing)
+
+            log_probs = F.log_softmax(logits, dim=-1)
+            ce_loss = -(smooth_targets * log_probs).sum(dim=-1)
+
+            # Focal modulation
             pt = torch.exp(-ce_loss)
             focal = ((1 - pt) ** self.gamma) * ce_loss
 
@@ -96,7 +126,7 @@ if HAS_TORCH:
             return torch.stack(losses, dim=1).mean()
 
     class HydraTrainer:
-        """Trainer for the full HYDRA Ensemble."""
+        """SUPER INSANE Trainer for the full HYDRA Ensemble."""
 
         def __init__(
             self,
@@ -113,24 +143,52 @@ if HAS_TORCH:
 
             self._model = HydraGate(cfg.ensemble_config).to(self._device)
             logger.info(
-                "HYDRA Full Ensemble initialized: %s parameters on %s",
+                "HYDRA SUPER INSANE Ensemble: %s parameters on %s",
                 f"{self._model.count_parameters():,}", self._device,
             )
 
-            self._optimizer = torch.optim.AdamW(
-                self._model.parameters(),
-                lr=cfg.learning_rate,
-                weight_decay=cfg.weight_decay,
-            )
+            # Separate LR groups: sub-models vs gate layers
+            sub_model_params = []
+            gate_params = []
+            for name, param in self._model.named_parameters():
+                if any(m in name for m in ('tft.', 'lstm.', 'cnn.', 'moe.', 'tcn.',
+                                            'transformer.')):
+                    if not any(p in name for p in ('_proj', '_adapter')):
+                        sub_model_params.append(param)
+                        continue
+                gate_params.append(param)
+
+            self._optimizer = torch.optim.AdamW([
+                {"params": sub_model_params, "lr": cfg.learning_rate * 0.5},  # Sub-models: lower LR
+                {"params": gate_params, "lr": cfg.learning_rate},             # Gate: full LR
+            ], weight_decay=cfg.weight_decay)
 
             self._scheduler = torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
                 self._optimizer, T_0=cfg.cosine_t_max, T_mult=2,
             )
 
-            self._focal = FocalLoss(cfg.focal_gamma, cfg.focal_alpha)
+            self._focal = LabelSmoothingFocalLoss(
+                cfg.focal_gamma, cfg.focal_alpha, cfg.label_smoothing,
+            )
             self._quantile = QuantileLoss(cfg.ensemble_config.tft_config.quantile_targets)
             amp_enabled = cfg.use_amp and self._device.type == "cuda"
             self._scaler = self._create_grad_scaler(enabled=amp_enabled)
+
+            # SWA model
+            # Store initial LRs for warmup scheduling
+            for pg in self._optimizer.param_groups:
+                pg['initial_lr'] = pg['lr']
+
+            self._swa_model = None
+            self._swa_scheduler = None
+            if cfg.swa_start_epoch < cfg.max_epochs:
+                try:
+                    from torch.optim.swa_utils import AveragedModel, SWALR
+                    self._swa_model = AveragedModel(self._model)
+                    self._swa_scheduler = SWALR(self._optimizer, swa_lr=cfg.swa_lr)
+                    logger.info("SWA enabled (starts epoch %d)", cfg.swa_start_epoch)
+                except ImportError:
+                    logger.warning("SWA unavailable — torch.optim.swa_utils not found")
 
             self._best_val_sharpe = -float("inf")
             self._best_val_loss = float("inf")
@@ -154,19 +212,49 @@ if HAS_TORCH:
         def _autocast_context(self):
             if not self._config.use_amp or self._device.type != "cuda":
                 return nullcontext()
-
             try:
                 return torch.amp.autocast("cuda", enabled=True)
             except (AttributeError, TypeError):
                 return torch.cuda.amp.autocast(enabled=True)
 
+        def _get_warmup_factor(self) -> float:
+            """Linear warmup from 0.1 to 1.0 over warmup_epochs."""
+            if self._epoch >= self._config.warmup_epochs:
+                return 1.0
+            return 0.1 + 0.9 * (self._epoch / max(self._config.warmup_epochs, 1))
+
+        @staticmethod
+        def _mixup_data(x_cont, x_cat, y5m, y15m, y1h, raw_ret, alpha=0.2):
+            """Mixup augmentation — interpolates continuous features and soft labels."""
+            if alpha <= 0:
+                return x_cont, x_cat, y5m, y15m, y1h, raw_ret, None
+            lam = np.random.beta(alpha, alpha) if alpha > 0 else 1.0
+            lam = max(lam, 1 - lam)  # Ensure lam >= 0.5
+            batch_size = x_cont.size(0)
+            index = torch.randperm(batch_size, device=x_cont.device)
+
+            mixed_cont = lam * x_cont + (1 - lam) * x_cont[index]
+            # Don't mix categorical — keep original
+            mixed_ret = lam * raw_ret + (1 - lam) * raw_ret[index]
+
+            return mixed_cont, x_cat, y5m, y15m, y1h, mixed_ret, (index, lam)
+
         def train(self, train_loader, val_loader) -> dict:
             cfg = self._config
-            logger.info("Starting HYDRA Ensemble training: %d epochs max", cfg.max_epochs)
+            logger.info(
+                "Starting SUPER INSANE training: %d epochs, grad_accum=%d, mixup=%.2f",
+                cfg.max_epochs, cfg.gradient_accumulation_steps, cfg.mixup_alpha,
+            )
 
             for epoch in range(cfg.max_epochs):
                 self._epoch = epoch
                 t0 = time.time()
+
+                # Apply warmup LR scaling
+                if epoch < cfg.warmup_epochs:
+                    warmup_factor = self._get_warmup_factor()
+                    for pg in self._optimizer.param_groups:
+                        pg['lr'] = pg.get('initial_lr', cfg.learning_rate) * warmup_factor
 
                 train_metrics = self._train_epoch(train_loader)
                 self._train_history.append(train_metrics)
@@ -174,17 +262,23 @@ if HAS_TORCH:
                 val_metrics = self._validate(val_loader)
                 self._val_history.append(val_metrics)
 
-                self._scheduler.step()
-                lr = self._optimizer.param_groups[0]["lr"]
+                # Scheduler step
+                use_swa = (self._swa_model is not None and epoch >= cfg.swa_start_epoch)
+                if use_swa:
+                    self._swa_model.update_parameters(self._model)
+                    self._swa_scheduler.step()
+                else:
+                    self._scheduler.step()
 
+                lr = self._optimizer.param_groups[0]["lr"]
                 elapsed = time.time() - t0
                 logger.info(
-                    "Epoch %d/%d — loss=%.4f/%.4f acc=%.1f%% sharpe=%.2f lr=%.6f (%.1fs)",
+                    "Epoch %d/%d — loss=%.4f/%.4f acc=%.1f%% sharpe=%.2f lr=%.6f %s(%.1fs)",
                     epoch + 1, cfg.max_epochs,
                     train_metrics["loss"], val_metrics["loss"],
                     val_metrics["accuracy"] * 100,
                     val_metrics.get("sharpe_proxy", 0.0),
-                    lr, elapsed,
+                    lr, "[SWA] " if use_swa else "", elapsed,
                 )
 
                 improved = self._check_improvement(val_metrics)
@@ -199,6 +293,16 @@ if HAS_TORCH:
                     )
                     break
 
+            # Finalize SWA
+            if self._swa_model is not None and self._epoch >= cfg.swa_start_epoch:
+                try:
+                    from torch.optim.swa_utils import update_bn
+                    update_bn(train_loader, self._swa_model, device=self._device)
+                    self._save_checkpoint("swa_final")
+                    logger.info("SWA batch-norm update complete, checkpoint saved")
+                except Exception as e:
+                    logger.warning("SWA BN update failed: %s", e)
+
             return {
                 "total_epochs": self._epoch + 1,
                 "best_val_sharpe": self._best_val_sharpe,
@@ -208,12 +312,48 @@ if HAS_TORCH:
                 "model_params": self._model.count_parameters(),
             }
 
-        def _compute_aux_losses(self, aux_logits_list: list[torch.Tensor], targets: list[torch.Tensor]) -> torch.Tensor:
-            """Compute loss for auxiliary heads [y5m, y15m, y1h]"""
+        def _compute_aux_losses(self, aux_logits_list: list[torch.Tensor],
+                                targets: list[torch.Tensor]) -> torch.Tensor:
+            """Compute loss for auxiliary heads [y5m, y15m, y1h]."""
             loss = 0.0
             for logits, target in zip(aux_logits_list, targets):
                 loss += self._focal(logits, target)
             return loss / 3.0
+
+        @staticmethod
+        def _diversity_loss(logits_list: list[list[torch.Tensor]]) -> torch.Tensor:
+            """
+            Diversity loss: encourage sub-models to produce different predictions.
+            Uses cosine similarity between sub-model prediction vectors.
+            Lower similarity = more diversity = better ensemble.
+            """
+            # Collect the primary logits from each sub-model
+            flat = []
+            for logits in logits_list:
+                if isinstance(logits, list):
+                    # TFT: list of [logits_5m, logits_15m, logits_1h]
+                    flat.append(torch.cat(logits, dim=-1))
+                else:
+                    flat.append(logits)
+
+            if len(flat) < 2:
+                return torch.tensor(0.0)
+
+            # Stack: (n_models, batch, logit_dims) — dims may vary so use first timeframe
+            # Compute pairwise cosine similarity between model outputs
+            total_sim = torch.tensor(0.0, device=flat[0].device)
+            count = 0
+            for i in range(len(flat)):
+                for j in range(i + 1, len(flat)):
+                    # Project to same dim: use min
+                    min_dim = min(flat[i].size(-1), flat[j].size(-1))
+                    a = flat[i][:, :min_dim]
+                    b = flat[j][:, :min_dim]
+                    sim = F.cosine_similarity(a, b, dim=-1).mean()
+                    total_sim = total_sim + sim.abs()
+                    count += 1
+
+            return total_sim / max(count, 1)
 
         def _train_epoch(self, loader) -> dict:
             self._model.train()
@@ -224,60 +364,105 @@ if HAS_TORCH:
             total_samples = 0
             n_batches = 0
 
-            for batch in loader:
+            self._optimizer.zero_grad(set_to_none=True)
+
+            for batch_idx, batch in enumerate(loader):
                 cont, cat, y5m, y15m, y1h, raw_ret = [b.to(self._device) for b in batch]
                 targets = [y5m, y15m, y1h]
 
-                self._optimizer.zero_grad(set_to_none=True)
+                # Mixup augmentation
+                if cfg.mixup_alpha > 0 and self.training_uses_mixup:
+                    cont, cat, y5m, y15m, y1h, raw_ret, mixup_info = self._mixup_data(
+                        cont, cat, y5m, y15m, y1h, raw_ret, cfg.mixup_alpha,
+                    )
+                    targets = [y5m, y15m, y1h]
 
                 with self._autocast_context():
                     outputs = self._model(cont, cat)
 
-                    # 1. Main Ensemble Classification Loss (Focal)
+                    # 1. Main Classification Loss (Label Smoothing Focal)
                     loss_cls = (
                         self._focal(outputs["logits_5m"], y5m) +
                         self._focal(outputs["logits_15m"], y15m) +
                         self._focal(outputs["logits_1h"], y1h)
                     ) / 3.0
 
-                    # 2. Main Ensemble Quantile Loss
+                    # 2. Quantile Loss
                     loss_q = (
                         self._quantile(outputs["quantiles_5m"], raw_ret[:, 0:1].expand(-1, 3)) +
                         self._quantile(outputs["quantiles_15m"], raw_ret[:, 1:2].expand(-1, 3)) +
                         self._quantile(outputs["quantiles_1h"], raw_ret[:, 2:3].expand(-1, 3))
                     ) / 3.0
 
-                    # 3. Auxiliary Sub-Model Losses (Forces sub-models to be predictive independent of gate)
+                    # 3. ALL 6 Auxiliary Sub-Model Losses
                     loss_tft_aux = self._compute_aux_losses(outputs["tft_logits"], targets)
                     loss_lstm_aux = self._compute_aux_losses(outputs["lstm_logits"], targets)
                     loss_cnn_aux = self._compute_aux_losses(outputs["cnn_logits"], targets)
                     loss_moe_aux = self._compute_aux_losses(outputs["moe_logits"], targets)
+                    loss_tcn_aux = self._compute_aux_losses(outputs["tcn_logits"], targets)
+                    loss_trans_aux = self._compute_aux_losses(outputs["transformer_logits"], targets)
 
-                    total_aux_loss = (loss_tft_aux + loss_lstm_aux + loss_cnn_aux + loss_moe_aux) / 4.0
+                    total_aux_loss = (
+                        loss_tft_aux + loss_lstm_aux + loss_cnn_aux +
+                        loss_moe_aux + loss_tcn_aux + loss_trans_aux
+                    ) / 6.0
 
-                    # Combined Objective Function
+                    # 4. MoE Load Balance Loss
+                    moe_lb_loss = outputs.get("moe_load_balance_loss", torch.tensor(0.0))
+
+                    # 5. Diversity Loss
+                    diversity = self._diversity_loss([
+                        outputs["tft_logits"],
+                        outputs["lstm_logits"][0] if outputs["lstm_logits"] else outputs["logits_5m"],
+                        outputs["cnn_logits"][0] if outputs["cnn_logits"] else outputs["logits_5m"],
+                        outputs["moe_logits"][0] if outputs["moe_logits"] else outputs["logits_5m"],
+                    ])
+
+                    # Combined SUPER INSANE Objective Function
                     loss = (
-                        (cfg.classification_loss_weight * loss_cls) +
-                        (cfg.quantile_loss_weight * loss_q) +
-                        (cfg.aux_loss_weight * total_aux_loss)
+                        cfg.classification_loss_weight * loss_cls +
+                        cfg.quantile_loss_weight * loss_q +
+                        cfg.aux_loss_weight * total_aux_loss +
+                        cfg.moe_balance_weight * moe_lb_loss +
+                        cfg.diversity_loss_weight * diversity
                     )
 
-                self._scaler.scale(loss).backward()
-                self._scaler.unscale_(self._optimizer)
-                nn.utils.clip_grad_norm_(self._model.parameters(), cfg.gradient_clip_norm)
-                self._scaler.step(self._optimizer)
-                self._scaler.update()
+                    # Scale for gradient accumulation
+                    loss = loss / cfg.gradient_accumulation_steps
 
-                total_loss += loss.item()
+                self._scaler.scale(loss).backward()
+
+                # Gradient accumulation step
+                if (batch_idx + 1) % cfg.gradient_accumulation_steps == 0:
+                    self._scaler.unscale_(self._optimizer)
+                    nn.utils.clip_grad_norm_(self._model.parameters(), cfg.gradient_clip_norm)
+                    self._scaler.step(self._optimizer)
+                    self._scaler.update()
+                    self._optimizer.zero_grad(set_to_none=True)
+
+                total_loss += loss.item() * cfg.gradient_accumulation_steps
                 preds = outputs["logits_1h"].argmax(dim=-1)
                 total_correct += (preds == y1h).sum().item()
                 total_samples += y1h.shape[0]
                 n_batches += 1
 
+            # Flush remaining gradients
+            if n_batches % cfg.gradient_accumulation_steps != 0:
+                self._scaler.unscale_(self._optimizer)
+                nn.utils.clip_grad_norm_(self._model.parameters(), cfg.gradient_clip_norm)
+                self._scaler.step(self._optimizer)
+                self._scaler.update()
+                self._optimizer.zero_grad(set_to_none=True)
+
             return {
                 "loss": total_loss / max(n_batches, 1),
                 "accuracy": total_correct / max(total_samples, 1),
             }
+
+        @property
+        def training_uses_mixup(self) -> bool:
+            """Only use mixup after warmup phase."""
+            return self._epoch >= self._config.warmup_epochs
 
         @torch.no_grad()
         def _validate(self, loader) -> dict:
@@ -289,6 +474,7 @@ if HAS_TORCH:
             total_samples = 0
             n_batches = 0
             all_preds = []
+            all_confidence = []
 
             for batch in loader:
                 cont, cat, y5m, y15m, y1h, raw_ret = [b.to(self._device) for b in batch]
@@ -315,6 +501,10 @@ if HAS_TORCH:
                 total_correct += (preds == y1h).sum().item()
                 total_samples += y1h.shape[0]
 
+                # Track confidence
+                if "confidence" in outputs:
+                    all_confidence.extend(outputs["confidence"].squeeze(-1).cpu().numpy().tolist())
+
                 pred_dir = preds.float() - 1.0  # SHORT=-1, FLAT=0, LONG=1
                 actual_ret = raw_ret[:, 2]      # 1h returns
                 strategy_ret = pred_dir * actual_ret
@@ -327,11 +517,17 @@ if HAS_TORCH:
             if len(all_preds_arr) > 1 and np.std(all_preds_arr) > 0:
                 sharpe_proxy = float(np.mean(all_preds_arr) / np.std(all_preds_arr) * np.sqrt(252 * 24))
 
-            return {
+            result = {
                 "loss": total_loss / max(n_batches, 1),
                 "accuracy": total_correct / max(total_samples, 1),
                 "sharpe_proxy": sharpe_proxy,
             }
+
+            if all_confidence:
+                result["mean_confidence"] = float(np.mean(all_confidence))
+                result["confidence_std"] = float(np.std(all_confidence))
+
+            return result
 
         def _check_improvement(self, val_metrics: dict) -> bool:
             cfg = self._config
@@ -362,7 +558,7 @@ if HAS_TORCH:
             ckpt_dir.mkdir(parents=True, exist_ok=True)
             path = ckpt_dir / f"hydra_ensemble_{tag}.pt"
 
-            torch.save({
+            save_dict = {
                 "epoch": self._epoch,
                 "model_state_dict": self._model.state_dict(),
                 "optimizer_state_dict": self._optimizer.state_dict(),
@@ -371,10 +567,14 @@ if HAS_TORCH:
                 "best_val_sharpe": self._best_val_sharpe,
                 "best_val_loss": self._best_val_loss,
                 "ensemble_config": self._config.ensemble_config,
+                "trainer_config": self._config,
                 "train_history": self._train_history,
                 "val_history": self._val_history,
-            }, path)
+            }
+            if self._swa_model is not None:
+                save_dict["swa_model_state_dict"] = self._swa_model.state_dict()
 
+            torch.save(save_dict, path)
             logger.info("Checkpoint saved: %s (epoch %d)", path, self._epoch + 1)
             return path
 

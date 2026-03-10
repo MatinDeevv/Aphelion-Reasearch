@@ -1,7 +1,8 @@
 """
-APHELION HYDRA — Dynamic Attention Gate (Full Ensemble)
-The master neural gate joining TFT, LSTM, CNN, and MoE.
-Dynamically weights predictions from all sub-models based on market regime context.
+APHELION HYDRA — Dynamic Attention Gate (SUPER INSANE Edition)
+The master neural gate joining all 6 sub-models via multi-head cross-attention,
+cross-model interaction layers, stochastic model dropout, regime-aware gating,
+and deep residual output heads.
 """
 
 from __future__ import annotations
@@ -26,9 +27,12 @@ from aphelion.intelligence.hydra.tcn import TCNConfig, HydraTCN
 from aphelion.intelligence.hydra.transformer import TransformerConfig, HydraTransformer
 
 
+NUM_SUB_MODELS = 6  # TFT, LSTM, CNN, MoE, TCN, Transformer
+
+
 @dataclass
 class EnsembleConfig:
-    """HYDRA Full Ensemble configuration."""
+    """HYDRA Full Ensemble — SUPER INSANE configuration."""
     tft_config: TFTConfig = field(default_factory=TFTConfig)
     lstm_config: LSTMConfig = field(default_factory=LSTMConfig)
     cnn_config: CNNConfig = field(default_factory=CNNConfig)
@@ -36,33 +40,125 @@ class EnsembleConfig:
     tcn_config: TCNConfig = field(default_factory=TCNConfig)
     transformer_config: TransformerConfig = field(default_factory=TransformerConfig)
 
-    # Master projection size
-    gate_hidden_size: int = 256
-    dropout: float = 0.2
+    # SUPER INSANE Master gate
+    gate_hidden_size: int = 512
+    gate_n_heads: int = 8       # Multi-head cross-attention
+    gate_n_interaction_layers: int = 2  # Cross-model interaction
+    model_dropout: float = 0.1  # Stochastic model dropout
+    dropout: float = 0.15
     n_horizons: int = 3
     n_classes: int = 3
     n_quantiles: int = 3
 
 
 if HAS_TORCH:
+
+    class CrossModelInteraction(nn.Module):
+        """Transformer layer over sub-model latents for cross-model reasoning."""
+
+        def __init__(self, d_model: int, n_heads: int = 8, dropout: float = 0.1):
+            super().__init__()
+            self.norm1 = nn.LayerNorm(d_model)
+            self.attn = nn.MultiheadAttention(
+                d_model, n_heads, dropout=dropout, batch_first=True,
+            )
+            self.norm2 = nn.LayerNorm(d_model)
+            self.ffn = nn.Sequential(
+                nn.Linear(d_model, d_model * 4),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(d_model * 4, d_model),
+                nn.Dropout(dropout),
+            )
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            # Pre-norm self-attention
+            normed = self.norm1(x)
+            attn_out, _ = self.attn(normed, normed, normed)
+            x = x + attn_out
+            # Pre-norm FFN
+            normed = self.norm2(x)
+            x = x + self.ffn(normed)
+            return x
+
+    class MultiHeadCrossAttentionGate(nn.Module):
+        """Multi-head cross-attention from learnable queries to sub-model latents."""
+
+        def __init__(self, d_model: int, n_heads: int = 8, dropout: float = 0.1):
+            super().__init__()
+            self.n_heads = n_heads
+            self.d_k = d_model // n_heads
+            assert d_model % n_heads == 0
+
+            self.W_q = nn.Linear(d_model, d_model)
+            self.W_k = nn.Linear(d_model, d_model)
+            self.W_v = nn.Linear(d_model, d_model)
+            self.W_o = nn.Linear(d_model, d_model)
+            self.dropout = nn.Dropout(dropout)
+            self.norm = nn.LayerNorm(d_model)
+
+        def forward(self, query: torch.Tensor,
+                    kv: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+            batch = query.size(0)
+            n_queries = query.size(1)
+            n_kv = kv.size(1)
+
+            Q = self.W_q(query).view(batch, n_queries, self.n_heads, self.d_k).transpose(1, 2)
+            K = self.W_k(kv).view(batch, n_kv, self.n_heads, self.d_k).transpose(1, 2)
+            V = self.W_v(kv).view(batch, n_kv, self.n_heads, self.d_k).transpose(1, 2)
+
+            scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.d_k)
+            attn_weights = F.softmax(scores, dim=-1)
+            attn_weights = self.dropout(attn_weights)
+
+            context = torch.matmul(attn_weights, V)
+            context = context.transpose(1, 2).contiguous().view(batch, n_queries, -1)
+            context = self.W_o(context)
+            context = self.norm(context)
+
+            return context, attn_weights
+
+    class DeepResidualHead(nn.Module):
+        """Deep output head with residual connection."""
+
+        def __init__(self, input_dim: int, hidden_dim: int, output_dim: int,
+                     dropout: float = 0.15):
+            super().__init__()
+            self.net = nn.Sequential(
+                nn.Linear(input_dim, hidden_dim),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_dim, hidden_dim // 2),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(hidden_dim // 2, output_dim),
+            )
+            self.skip = nn.Linear(input_dim, output_dim)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            return self.net(x) + self.skip(x)
+
+
     class HydraGate(nn.Module):
         """
-        Master Dynamic Attention Gate.
-        
-        Sub-models:
-        1. TFT (Baseline Multi-horizon logic & Interpretability)
-        2. LSTM (Sequence Momentum / State persistence)
-        3. CNN (Structural Pattern matching)
-        4. MoE (Regime-specific specializations)
-        5. TCN (Long-range temporal dependencies via dilated causal convolutions)
-        6. Transformer (Global context extraction via multi-head self-attention)
+        SUPER INSANE Master Dynamic Attention Gate.
+
+        Architecture:
+        1. Run all 6 sub-models in parallel
+        2. Project all latents to common gate dimension (512)
+        3. Cross-model interaction layers (2x self-attention over 6 model tokens)
+        4. Stochastic model dropout (randomly zero models during training)
+        5. Multi-head cross-attention gate (8 heads) — learnable queries attend to models
+        6. Deep residual output heads (classification, quantile, uncertainty, confidence)
+        7. MoE load balance loss passthrough
         """
+
         def __init__(self, config: Optional[EnsembleConfig] = None):
             super().__init__()
             self.config = config or EnsembleConfig()
             cfg = self.config
 
-            # Initialize all sub-models
+            # ── Sub-Models ────────────────────────────────────────────────
             self.tft = TemporalFusionTransformer(cfg.tft_config)
             self.lstm = HydraLSTM(cfg.lstm_config)
             self.cnn = HydraCNN(cfg.cnn_config)
@@ -70,61 +166,98 @@ if HAS_TORCH:
             self.tcn = HydraTCN(cfg.tcn_config)
             self.transformer = HydraTransformer(cfg.transformer_config)
 
-            # Projection from sub-model latent sizes -> gate hidden size
-            self.lstm_proj = nn.Linear(cfg.lstm_config.hidden_size, cfg.gate_hidden_size)
-            self.cnn_proj = nn.Linear(cfg.cnn_config.hidden_size, cfg.gate_hidden_size)
-            self.moe_proj = nn.Linear(cfg.moe_config.hidden_size, cfg.gate_hidden_size)
-            self.tcn_proj = nn.Linear(cfg.tcn_config.hidden_size, cfg.gate_hidden_size)
-            self.transformer_proj = nn.Linear(cfg.transformer_config.hidden_size, cfg.gate_hidden_size)
-            
-            # The TFT doesn't output a single latent naturally in its public API
-            # that we've exposed, but we can capture its final FF output.
-            # To avoid refactoring TFT internals, we route all TFT 'logits' and context 
-            # through a small adapter, or rely on the combined latent stream.
-            
-            # For this Gate, we'll design the Attention to combine the 3 new latents + TFT logits
-            tft_info_size = (cfg.n_horizons * cfg.n_classes) + (cfg.n_horizons * cfg.n_quantiles) + 1 # +1 for uncertainty
-            self.tft_adapter = nn.Sequential(
-                nn.Linear(tft_info_size, cfg.gate_hidden_size),
-                nn.ReLU(),
+            # ── Latent Projections → Gate Hidden ──────────────────────────
+            self.lstm_proj = nn.Sequential(
+                nn.Linear(cfg.lstm_config.hidden_size, cfg.gate_hidden_size),
+                nn.GELU(),
+            )
+            self.cnn_proj = nn.Sequential(
+                nn.Linear(cfg.cnn_config.hidden_size, cfg.gate_hidden_size),
+                nn.GELU(),
+            )
+            self.moe_proj = nn.Sequential(
+                nn.Linear(cfg.moe_config.hidden_size, cfg.gate_hidden_size),
+                nn.GELU(),
+            )
+            self.tcn_proj = nn.Sequential(
+                nn.Linear(cfg.tcn_config.hidden_size, cfg.gate_hidden_size),
+                nn.GELU(),
+            )
+            self.transformer_proj = nn.Sequential(
+                nn.Linear(cfg.transformer_config.hidden_size, cfg.gate_hidden_size),
+                nn.GELU(),
             )
 
-            # Master Attention Query (Learned Parameter)
-            self.master_query = nn.Parameter(torch.randn(1, 1, cfg.gate_hidden_size))
+            # TFT adapter
+            tft_info_size = (
+                cfg.n_horizons * cfg.n_classes +
+                cfg.n_horizons * cfg.n_quantiles + 1
+            )
+            self.tft_adapter = nn.Sequential(
+                nn.Linear(tft_info_size, cfg.gate_hidden_size),
+                nn.GELU(),
+                nn.Dropout(cfg.dropout),
+                nn.Linear(cfg.gate_hidden_size, cfg.gate_hidden_size),
+                nn.GELU(),
+            )
 
-            # Master Attention mechanisms (Scaled Dot Product over the 4 model latents)
-            self.attn_k = nn.Linear(cfg.gate_hidden_size, cfg.gate_hidden_size)
-            self.attn_v = nn.Linear(cfg.gate_hidden_size, cfg.gate_hidden_size)
-            
-            # Final Heads (Classification, Quantiles, Uncertainty) on top of Gate
+            # ── Cross-Model Interaction Layers ────────────────────────────
+            self.interaction_layers = nn.ModuleList([
+                CrossModelInteraction(cfg.gate_hidden_size, cfg.gate_n_heads, cfg.dropout)
+                for _ in range(cfg.gate_n_interaction_layers)
+            ])
+            self.interaction_norm = nn.LayerNorm(cfg.gate_hidden_size)
+
+            # ── Multi-Head Cross-Attention Gate ───────────────────────────
+            self.master_queries = nn.Parameter(
+                torch.randn(1, cfg.n_horizons + 1, cfg.gate_hidden_size) * 0.02,
+            )
+            self.cross_attention = MultiHeadCrossAttentionGate(
+                cfg.gate_hidden_size, cfg.gate_n_heads, cfg.dropout,
+            )
+
+            # ── Stochastic Model Dropout ──────────────────────────────────
+            self.model_dropout_p = cfg.model_dropout
+
+            # ── Deep Residual Output Heads ────────────────────────────────
             self.classification_heads = nn.ModuleList([
-                nn.Sequential(
-                    nn.Linear(cfg.gate_hidden_size, cfg.gate_hidden_size // 2),
-                    nn.ReLU(),
-                    nn.Dropout(cfg.dropout),
-                    nn.Linear(cfg.gate_hidden_size // 2, cfg.n_classes),
+                DeepResidualHead(
+                    cfg.gate_hidden_size, cfg.gate_hidden_size // 2,
+                    cfg.n_classes, cfg.dropout,
                 )
                 for _ in range(cfg.n_horizons)
             ])
 
             self.quantile_heads = nn.ModuleList([
-                nn.Linear(cfg.gate_hidden_size, cfg.n_quantiles)
+                nn.Sequential(
+                    nn.Linear(cfg.gate_hidden_size, cfg.gate_hidden_size // 4),
+                    nn.GELU(),
+                    nn.Linear(cfg.gate_hidden_size // 4, cfg.n_quantiles),
+                )
                 for _ in range(cfg.n_horizons)
             ])
 
             self.uncertainty_head = nn.Sequential(
                 nn.Linear(cfg.gate_hidden_size, cfg.gate_hidden_size // 4),
-                nn.ReLU(),
+                nn.GELU(),
+                nn.Dropout(cfg.dropout),
                 nn.Linear(cfg.gate_hidden_size // 4, 1),
                 nn.Softplus(),
             )
-            
+
+            self.confidence_head = nn.Sequential(
+                nn.Linear(cfg.gate_hidden_size, cfg.gate_hidden_size // 4),
+                nn.GELU(),
+                nn.Linear(cfg.gate_hidden_size // 4, 1),
+                nn.Sigmoid(),
+            )
+
             self._init_weights()
 
         def _init_weights(self):
-            nn.init.xavier_uniform_(self.master_query)
             for name, param in self.named_parameters():
-                if 'proj' in name or 'adapter' in name or 'head' in name or 'attn' in name:
+                if any(k in name for k in ('proj', 'adapter', 'head', 'attn',
+                                            'interaction', 'confidence', 'master')):
                     if 'weight' in name and param.dim() >= 2:
                         nn.init.xavier_uniform_(param)
                     elif 'bias' in name:
@@ -135,73 +268,78 @@ if HAS_TORCH:
             cont_inputs: torch.Tensor,
             cat_inputs: torch.Tensor,
         ) -> dict[str, torch.Tensor]:
-            """
-            Ensemble forward pass.
-            """
-            # 1. Run Sub-Models
+            """SUPER INSANE Ensemble forward pass."""
+            cfg = self.config
+
+            # ── 1. Run All Sub-Models ─────────────────────────────────────
             tft_out = self.tft(cont_inputs, cat_inputs)
             lstm_out = self.lstm(cont_inputs, cat_inputs)
             cnn_out = self.cnn(cont_inputs, cat_inputs)
             moe_out = self.moe(cont_inputs, cat_inputs)
+            tcn_out = self.tcn(cont_inputs, cat_inputs)
+            trans_out = self.transformer(cont_inputs, cat_inputs)
 
-            # 2. Extract & Project Latents
-            # Project LSTM, CNN, MoE to common dimension
-            l_lstm = self.lstm_proj(lstm_out["latent"]).unsqueeze(1)  # (batch, 1, hidden)
-            l_cnn = self.cnn_proj(cnn_out["latent"]).unsqueeze(1)     # (batch, 1, hidden)
-            l_moe = self.moe_proj(moe_out["latent"]).unsqueeze(1)     # (batch, 1, hidden)
-            
-            # Flatten TFT outputs to create a TFT Latent
+            # ── 2. Project Latents ────────────────────────────────────────
+            l_lstm = self.lstm_proj(lstm_out["latent"]).unsqueeze(1)
+            l_cnn = self.cnn_proj(cnn_out["latent"]).unsqueeze(1)
+            l_moe = self.moe_proj(moe_out["latent"]).unsqueeze(1)
+            l_tcn = self.tcn_proj(tcn_out["latent"]).unsqueeze(1)
+            l_trans = self.transformer_proj(trans_out["latent"]).unsqueeze(1)
+
             tft_flat = torch.cat([
                 tft_out["logits_5m"], tft_out["logits_15m"], tft_out["logits_1h"],
                 tft_out["quantiles_5m"], tft_out["quantiles_15m"], tft_out["quantiles_1h"],
-                tft_out["uncertainty"]
+                tft_out["uncertainty"],
             ], dim=-1)
-            l_tft = self.tft_adapter(tft_flat).unsqueeze(1)  # (batch, 1, hidden)
+            l_tft = self.tft_adapter(tft_flat).unsqueeze(1)
 
-            # TCN and Transformer latents
-            tcn_out = self.tcn(cont_inputs, cat_inputs)
-            trans_out = self.transformer(cont_inputs, cat_inputs)
-            l_tcn = self.tcn_proj(tcn_out["latent"]).unsqueeze(1)      # (batch, 1, hidden)
-            l_trans = self.transformer_proj(trans_out["latent"]).unsqueeze(1)  # (batch, 1, hidden)
-
-            # Stack into a sequence of 6 "tokens" representing the 6 DL models
-            # Shape: (batch, 6, gate_hidden_size)
+            # (batch, 6, gate_hidden_size)
             latents = torch.cat([l_tft, l_lstm, l_cnn, l_moe, l_tcn, l_trans], dim=1)
 
-            # 3. Dynamic Attention Gate
-            batch_size = latents.size(0)
-            
-            # Q: (batch, 1, hidden)
-            Q = self.master_query.expand(batch_size, -1, -1)
-            
-            # K, V: (batch, 6, hidden)
-            K = self.attn_k(latents)
-            V = self.attn_v(latents)
-            
-            # Attention scores: (batch, 1, 4)
-            d_k = K.size(-1)
-            scores = torch.bmm(Q, K.transpose(1, 2)) / math.sqrt(d_k)
-            attn_weights = F.softmax(scores, dim=-1)
-            
-            # Context vector (batch, 1, hidden) -> (batch, hidden)
-            context = torch.bmm(attn_weights, V).squeeze(1)
+            # ── 3. Stochastic Model Dropout ───────────────────────────────
+            if self.training and self.model_dropout_p > 0:
+                mask = (torch.rand(latents.size(0), NUM_SUB_MODELS, 1,
+                                   device=latents.device) > self.model_dropout_p).float()
+                # Ensure at least 2 models are active
+                while mask.sum(dim=1).min() < 2:
+                    mask = (torch.rand_like(mask) > self.model_dropout_p).float()
+                latents = latents * mask / (1.0 - self.model_dropout_p)
 
-            # 4. Master Output Heads
+            # ── 4. Cross-Model Interaction ────────────────────────────────
+            for layer in self.interaction_layers:
+                latents = layer(latents)
+            latents = self.interaction_norm(latents)
+
+            # ── 5. Multi-Head Cross-Attention Gate ────────────────────────
+            batch_size = latents.size(0)
+            queries = self.master_queries.expand(batch_size, -1, -1)
+            context, attn_weights = self.cross_attention(queries, latents)
+
+            # Split: first n_horizons for per-horizon, last for global
+            horizon_contexts = [context[:, i, :] for i in range(cfg.n_horizons)]
+            global_context = context[:, -1, :]
+
+            # ── 6. Output Heads ───────────────────────────────────────────
             logits = []
             probs = []
-            for head in self.classification_heads:
-                l = head(context)
+            for i, head in enumerate(self.classification_heads):
+                l = head(horizon_contexts[i])
                 logits.append(l)
                 probs.append(F.softmax(l, dim=-1))
 
             quantiles = []
-            for head in self.quantile_heads:
-                quantiles.append(head(context))
+            for i, head in enumerate(self.quantile_heads):
+                quantiles.append(head(horizon_contexts[i]))
 
-            uncertainty = self.uncertainty_head(context)
+            uncertainty = self.uncertainty_head(global_context)
+            confidence = self.confidence_head(global_context)
 
-            # Consolidate all metrics to allow multi-loss optimization
-            # `HydraTrainer` will use logits_5m, quantiles_5m, aux_lstm_logits, etc.
+            # MoE load balance loss
+            moe_lb_loss = moe_out.get("load_balance_loss", torch.tensor(0.0))
+
+            # Attention weights for interpretability: (batch, n_queries, n_models)
+            gate_attn = attn_weights.mean(dim=1)
+
             return {
                 # MASTER OUTPUTS
                 "logits_5m": logits[0],
@@ -214,13 +352,14 @@ if HAS_TORCH:
                 "quantiles_15m": quantiles[1],
                 "quantiles_1h": quantiles[2],
                 "uncertainty": uncertainty,
-                
+                "confidence": confidence,
+
                 # ENSEMBLE INSIGHTS
-                # Attention across [TFT, LSTM, CNN, MoE]
-                "gate_attention_weights": attn_weights, 
+                "gate_attention_weights": gate_attn,
                 "moe_routing_weights": moe_out["routing_weights"],
-                
-                # AUXILIARY LOSS LOGITS (For trainer.py)
+                "moe_load_balance_loss": moe_lb_loss,
+
+                # AUXILIARY LOSS LOGITS
                 "tft_logits": [tft_out["logits_5m"], tft_out["logits_15m"], tft_out["logits_1h"]],
                 "lstm_logits": lstm_out["aux_logits"],
                 "cnn_logits": cnn_out["aux_logits"],
@@ -228,8 +367,8 @@ if HAS_TORCH:
                 "tcn_logits": tcn_out["aux_logits"],
                 "transformer_logits": trans_out["aux_logits"],
 
-                # Interpretability forward-pass from TFT
-                "feature_weights": tft_out["feature_weights"]
+                # Interpretability
+                "feature_weights": tft_out["feature_weights"],
             }
 
         def count_parameters(self) -> int:
