@@ -124,7 +124,7 @@ print("  PHASE 4: INSTALLING DEPENDENCIES")
 print("=" * 70)
 
 subprocess.run([sys.executable, '-m', 'pip', 'install', '-e', '.[ml]', '-q'], check=True)
-subprocess.run([sys.executable, '-m', 'pip', 'install', 'loguru', '-q'], check=True)
+subprocess.run([sys.executable, '-m', 'pip', 'install', 'loguru', 'tqdm', '-q'], check=True)
 
 # Verify imports
 sys.path.insert(0, PROJECT)

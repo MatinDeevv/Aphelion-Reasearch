@@ -9,12 +9,14 @@ Trains the Full 6-model Ensemble end-to-end with:
 - Diversity Loss (encourage sub-model disagreement)
 - Linear Warmup + Cosine Annealing with Warm Restarts
 - Stochastic Weight Averaging (SWA) in final phase
+- SUPER LOGGING: tqdm progress bars, GPU stats, per-batch metrics
 """
 
 from __future__ import annotations
 
 import logging
 import time
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -29,6 +31,12 @@ try:
     HAS_TORCH = True
 except ImportError:
     HAS_TORCH = False
+
+try:
+    from tqdm.auto import tqdm
+    HAS_TQDM = True
+except ImportError:
+    HAS_TQDM = False
 
 from aphelion.intelligence.hydra.ensemble import EnsembleConfig, HydraGate
 
@@ -239,16 +247,39 @@ if HAS_TORCH:
 
             return mixed_cont, x_cat, y5m, y15m, y1h, mixed_ret, (index, lam)
 
+        def _gpu_stats(self) -> str:
+            """Get GPU memory usage string."""
+            if self._device.type != "cuda":
+                return ""
+            try:
+                allocated = torch.cuda.memory_allocated(self._device) / 1024**3
+                reserved = torch.cuda.memory_reserved(self._device) / 1024**3
+                return f"GPU: {allocated:.1f}/{reserved:.1f} GB"
+            except Exception:
+                return ""
+
         def train(self, train_loader, val_loader) -> dict:
             cfg = self._config
-            logger.info(
-                "Starting SUPER INSANE training: %d epochs, grad_accum=%d, mixup=%.2f",
-                cfg.max_epochs, cfg.gradient_accumulation_steps, cfg.mixup_alpha,
-            )
+            total_batches = len(train_loader)
+            total_params = self._model.count_parameters()
+
+            # Print training banner
+            print(f"\n{'━' * 70}")
+            print(f"  🔥 HYDRA SUPER INSANE TRAINING — {total_params:,} parameters")
+            print(f"  Epochs: {cfg.max_epochs} | Batch size: {train_loader.batch_size}")
+            print(f"  Batches/epoch: {total_batches} | Grad accum: {cfg.gradient_accumulation_steps}x")
+            print(f"  Effective batch: {train_loader.batch_size * cfg.gradient_accumulation_steps}")
+            print(f"  LR: {cfg.learning_rate} | Warmup: {cfg.warmup_epochs} epochs")
+            print(f"  Losses: Focal+Quantile+6xAux+MoE_LB+Diversity")
+            print(f"  AMP: {cfg.use_amp} | Device: {self._device}")
+            print(f"  {self._gpu_stats()}")
+            print(f"{'━' * 70}\n")
+
+            training_start = time.time()
 
             for epoch in range(cfg.max_epochs):
                 self._epoch = epoch
-                t0 = time.time()
+                epoch_start = time.time()
 
                 # Apply warmup LR scaling
                 if epoch < cfg.warmup_epochs:
@@ -271,37 +302,70 @@ if HAS_TORCH:
                     self._scheduler.step()
 
                 lr = self._optimizer.param_groups[0]["lr"]
-                elapsed = time.time() - t0
-                logger.info(
-                    "Epoch %d/%d — loss=%.4f/%.4f acc=%.1f%% sharpe=%.2f lr=%.6f %s(%.1fs)",
-                    epoch + 1, cfg.max_epochs,
-                    train_metrics["loss"], val_metrics["loss"],
-                    val_metrics["accuracy"] * 100,
-                    val_metrics.get("sharpe_proxy", 0.0),
-                    lr, "[SWA] " if use_swa else "", elapsed,
-                )
+                epoch_time = time.time() - epoch_start
+                total_time = time.time() - training_start
+                remaining_epochs = cfg.max_epochs - (epoch + 1)
+                eta = remaining_epochs * epoch_time
 
                 improved = self._check_improvement(val_metrics)
 
+                # Build status indicators
+                sharpe = val_metrics.get("sharpe_proxy", 0.0)
+                conf_str = ""
+                if "mean_confidence" in val_metrics:
+                    conf_str = f" conf={val_metrics['mean_confidence']:.3f}"
+
+                improve_marker = " ★ NEW BEST" if improved else ""
+                swa_marker = " [SWA]" if use_swa else ""
+                patience_bar = f"[{'█' * self._epochs_no_improve}{'░' * (cfg.patience - self._epochs_no_improve)}]" if cfg.patience <= 30 else f"[{self._epochs_no_improve}/{cfg.patience}]"
+
+                # Progress bar for epoch
+                pct = (epoch + 1) / cfg.max_epochs
+                bar_len = 20
+                filled = int(bar_len * pct)
+                bar = f"[{'█' * filled}{'░' * (bar_len - filled)}]"
+
+                print(
+                    f"  Epoch {epoch + 1:>3}/{cfg.max_epochs} {bar} "
+                    f"loss={train_metrics['loss']:.4f}/{val_metrics['loss']:.4f} "
+                    f"acc={val_metrics['accuracy'] * 100:.1f}% "
+                    f"sharpe={sharpe:+.3f}{conf_str} "
+                    f"lr={lr:.2e}{swa_marker} "
+                    f"({epoch_time:.0f}s) ETA={self._format_eta(eta)} "
+                    f"{self._gpu_stats()} "
+                    f"patience={patience_bar}{improve_marker}"
+                )
+
                 if (epoch + 1) % cfg.save_every_n_epochs == 0:
                     self._save_checkpoint("latest")
+                    print(f"    💾 Checkpoint saved (epoch {epoch + 1})")
 
                 if self._epochs_no_improve >= cfg.patience:
-                    logger.info(
-                        "Early stopping at epoch %d (no improvement for %d epochs)",
-                        epoch + 1, cfg.patience,
-                    )
+                    print(f"\n  ⛔ Early stopping at epoch {epoch + 1} "
+                          f"(no improvement for {cfg.patience} epochs)")
+                    print(f"     Best Sharpe: {self._best_val_sharpe:.4f} | "
+                          f"Best Loss: {self._best_val_loss:.4f}")
                     break
 
             # Finalize SWA
             if self._swa_model is not None and self._epoch >= cfg.swa_start_epoch:
                 try:
                     from torch.optim.swa_utils import update_bn
+                    print(f"\n  🔄 Running SWA batch-norm update...")
                     update_bn(train_loader, self._swa_model, device=self._device)
                     self._save_checkpoint("swa_final")
-                    logger.info("SWA batch-norm update complete, checkpoint saved")
+                    print(f"  ✓ SWA finalized and saved")
                 except Exception as e:
-                    logger.warning("SWA BN update failed: %s", e)
+                    print(f"  ⚠ SWA BN update failed: {e}")
+
+            total_time = time.time() - training_start
+            print(f"\n{'━' * 70}")
+            print(f"  ✅ TRAINING COMPLETE — {self._format_eta(total_time)}")
+            print(f"     Epochs:      {self._epoch + 1}")
+            print(f"     Best Sharpe: {self._best_val_sharpe:.4f}")
+            print(f"     Best Loss:   {self._best_val_loss:.4f}")
+            print(f"     Final Loss:  {self._val_history[-1]['loss']:.4f}")
+            print(f"{'━' * 70}\n")
 
             return {
                 "total_epochs": self._epoch + 1,
@@ -311,6 +375,17 @@ if HAS_TORCH:
                 "final_val_loss": self._val_history[-1]["loss"],
                 "model_params": self._model.count_parameters(),
             }
+
+        @staticmethod
+        def _format_eta(seconds: float) -> str:
+            if seconds < 60:
+                return f"{seconds:.0f}s"
+            elif seconds < 3600:
+                return f"{seconds / 60:.0f}m {seconds % 60:.0f}s"
+            else:
+                h = int(seconds // 3600)
+                m = int((seconds % 3600) // 60)
+                return f"{h}h {m}m"
 
         def _compute_aux_losses(self, aux_logits_list: list[torch.Tensor],
                                 targets: list[torch.Tensor]) -> torch.Tensor:
@@ -360,13 +435,28 @@ if HAS_TORCH:
             cfg = self._config
 
             total_loss = 0.0
+            total_cls_loss = 0.0
+            total_aux_loss = 0.0
             total_correct = 0
             total_samples = 0
             n_batches = 0
+            batch_times = []
 
             self._optimizer.zero_grad(set_to_none=True)
 
-            for batch_idx, batch in enumerate(loader):
+            # Create progress bar
+            n_total = len(loader)
+            if HAS_TQDM:
+                pbar = tqdm(
+                    loader, desc=f"  Train E{self._epoch + 1:>3}",
+                    ncols=120, leave=False,
+                    bar_format="  {desc} |{bar:25}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}, {rate_fmt}] {postfix}"
+                )
+            else:
+                pbar = loader
+
+            for batch_idx, batch in enumerate(pbar):
+                batch_t0 = time.time()
                 cont, cat, y5m, y15m, y1h, raw_ret = [b.to(self._device) for b in batch]
                 targets = [y5m, y15m, y1h]
 
@@ -402,7 +492,7 @@ if HAS_TORCH:
                     loss_tcn_aux = self._compute_aux_losses(outputs["tcn_logits"], targets)
                     loss_trans_aux = self._compute_aux_losses(outputs["transformer_logits"], targets)
 
-                    total_aux_loss = (
+                    total_aux = (
                         loss_tft_aux + loss_lstm_aux + loss_cnn_aux +
                         loss_moe_aux + loss_tcn_aux + loss_trans_aux
                     ) / 6.0
@@ -422,7 +512,7 @@ if HAS_TORCH:
                     loss = (
                         cfg.classification_loss_weight * loss_cls +
                         cfg.quantile_loss_weight * loss_q +
-                        cfg.aux_loss_weight * total_aux_loss +
+                        cfg.aux_loss_weight * total_aux +
                         cfg.moe_balance_weight * moe_lb_loss +
                         cfg.diversity_loss_weight * diversity
                     )
@@ -440,11 +530,29 @@ if HAS_TORCH:
                     self._scaler.update()
                     self._optimizer.zero_grad(set_to_none=True)
 
-                total_loss += loss.item() * cfg.gradient_accumulation_steps
+                batch_loss = loss.item() * cfg.gradient_accumulation_steps
+                total_loss += batch_loss
+                total_cls_loss += loss_cls.item()
+                total_aux_loss += total_aux.item()
                 preds = outputs["logits_1h"].argmax(dim=-1)
                 total_correct += (preds == y1h).sum().item()
                 total_samples += y1h.shape[0]
                 n_batches += 1
+                batch_times.append(time.time() - batch_t0)
+
+                # Update progress bar every batch
+                if HAS_TQDM and batch_idx % 2 == 0:
+                    avg_loss = total_loss / n_batches
+                    acc = total_correct / max(total_samples, 1) * 100
+                    samples_sec = total_samples / sum(batch_times) if batch_times else 0
+                    pbar.set_postfix_str(
+                        f"loss={avg_loss:.4f} cls={total_cls_loss / n_batches:.3f} "
+                        f"aux={total_aux_loss / n_batches:.3f} "
+                        f"acc={acc:.1f}% {samples_sec:.0f} samp/s"
+                    )
+
+            if HAS_TQDM:
+                pbar.close()
 
             # Flush remaining gradients
             if n_batches % cfg.gradient_accumulation_steps != 0:
@@ -457,6 +565,9 @@ if HAS_TORCH:
             return {
                 "loss": total_loss / max(n_batches, 1),
                 "accuracy": total_correct / max(total_samples, 1),
+                "cls_loss": total_cls_loss / max(n_batches, 1),
+                "aux_loss": total_aux_loss / max(n_batches, 1),
+                "samples_per_sec": total_samples / sum(batch_times) if batch_times else 0,
             }
 
         @property
@@ -476,7 +587,16 @@ if HAS_TORCH:
             all_preds = []
             all_confidence = []
 
-            for batch in loader:
+            if HAS_TQDM:
+                pbar = tqdm(
+                    loader, desc=f"  Valid E{self._epoch + 1:>3}",
+                    ncols=120, leave=False,
+                    bar_format="  {desc} |{bar:25}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}] {postfix}"
+                )
+            else:
+                pbar = loader
+
+            for batch in pbar:
                 cont, cat, y5m, y15m, y1h, raw_ret = [b.to(self._device) for b in batch]
 
                 with self._autocast_context():
@@ -511,6 +631,15 @@ if HAS_TORCH:
                 all_preds.extend(strategy_ret.cpu().numpy().tolist())
 
                 n_batches += 1
+
+                # Update validation progress bar
+                if HAS_TQDM and n_batches % 5 == 0:
+                    avg_loss = total_loss / n_batches
+                    acc = total_correct / max(total_samples, 1) * 100
+                    pbar.set_postfix_str(f"loss={avg_loss:.4f} acc={acc:.1f}%")
+
+            if HAS_TQDM:
+                pbar.close()
 
             all_preds_arr = np.array(all_preds)
             sharpe_proxy = 0.0

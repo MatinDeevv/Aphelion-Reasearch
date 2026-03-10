@@ -114,19 +114,19 @@ if HAS_TORCH:
 
             # Top-K selection
             top_k_vals, top_k_idx = torch.topk(logits, self.top_k, dim=-1)
-            top_k_weights = F.softmax(top_k_vals, dim=-1)
+            top_k_weights = F.softmax(top_k_vals.float(), dim=-1)
 
-            # Create sparse routing weights
-            routing_weights = torch.zeros_like(logits)
+            # Create sparse routing weights (float32 to avoid AMP dtype mismatch)
+            routing_weights = torch.zeros(logits.shape, device=logits.device, dtype=torch.float32)
             routing_weights.scatter_(1, top_k_idx, top_k_weights)
 
             # Load balancing loss: encourage uniform expert usage
             # f_i = fraction of tokens routed to expert i
             # P_i = mean probability assigned to expert i
             # loss = num_experts * sum(f_i * P_i)
-            probs = F.softmax(logits, dim=-1)
-            expert_mask = torch.zeros_like(logits)
-            expert_mask.scatter_(1, top_k_idx, 1.0)
+            probs = F.softmax(logits.float(), dim=-1)
+            expert_mask = torch.zeros(logits.shape, device=logits.device, dtype=torch.float32)
+            expert_mask.scatter_(1, top_k_idx, torch.ones_like(top_k_weights))
             f = expert_mask.mean(dim=0)  # (num_experts,) fraction
             p = probs.mean(dim=0)        # (num_experts,) mean prob
             load_balance_loss = self.num_experts * (f * p).sum()
@@ -262,8 +262,9 @@ if HAS_TORCH:
                 expert_outputs = self.expert_dropout(expert_outputs)
 
             # Weighted combination using sparse routing weights
+            # Cast routing_weights to same dtype as expert_outputs for bmm
             combined = torch.bmm(
-                routing_weights.unsqueeze(1), expert_outputs,
+                routing_weights.unsqueeze(1).to(expert_outputs.dtype), expert_outputs,
             ).squeeze(1)  # (batch, hidden)
 
             proj = self.output_proj(combined)
