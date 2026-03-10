@@ -1,0 +1,45 @@
+{
+  "trading": {
+    "symbol": "XAUUSD",
+    "capital": 10000.0,
+    "warmup_bars": 200,
+    "mode": "paper"
+  },
+  "mt5": {
+    "login": 0,
+    "password": "",
+    "server": "",
+    "terminal_path": ""
+  },
+  "risk": {
+    "max_daily_dd": 0.03,
+    "max_exposure": 0.06,
+    "max_positions": 3,
+    "risk_per_trade": 0.01
+  },
+  "hydra": {
+    "checkpoint": "models/hydra_checkpoint.pt",
+    "min_confidence": 0.65
+  },
+  "training": {
+    "name": "custom",
+    "data_source": "synthetic",
+    "data_path": "",
+    "epochs": 20,
+    "batch_size": 512,
+    "train_split": 0.80,
+    "val_split": 0.10,
+    "test_split": 0.10,
+    "save_path": "models/hydra_checkpoint.pt"
+  },
+  "backtest": {
+    "symbol": "XAUUSD",
+    "start_date": "2023-01-01",
+    "end_date": "2025-01-01",
+    "capital": 10000.0,
+    "commission_pips": 0.35,
+    "slippage": "adaptive",
+    "data_path": ""
+  },
+  "first_run": true
+}
