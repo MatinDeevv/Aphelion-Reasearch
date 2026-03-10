@@ -1,9 +1,6 @@
-"""
-APHELION Risk — SENTINEL position management, TITAN quality gate,
-Almgren-Chriss optimal execution.
-"""
+"""APHELION Risk Execution — optimal execution algorithms."""
 
-from aphelion.risk.execution import (
+from .almgren_chriss import (
     AlmgrenChrissSolver,
     ExecutionConfig,
     ExecutionPlan,

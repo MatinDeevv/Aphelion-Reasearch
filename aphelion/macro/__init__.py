@@ -20,6 +20,12 @@ from .argus.core import ArgusCore, MarketAnomaly
 from .herald.core import HeraldCore, NewsEvent
 from .nexus.core import NexusCore, NexusOutput
 from .oracle.core import OracleCore, Forecast
+from .hmm_regime import (
+    HMMRegimeDetector,
+    HMMRegimeState,
+    HMMConfig,
+    HMMRegimeLabel,
+)
 
 __all__ = [
     "MacroAnalyzer",
@@ -47,4 +53,9 @@ __all__ = [
     "NexusOutput",
     "OracleCore",
     "Forecast",
+    # HMM Regime Detection
+    "HMMRegimeDetector",
+    "HMMRegimeState",
+    "HMMConfig",
+    "HMMRegimeLabel",
 ]

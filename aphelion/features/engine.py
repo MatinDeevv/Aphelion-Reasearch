@@ -24,6 +24,8 @@ from aphelion.features.mtf import MTFAlignmentEngine
 from aphelion.features.cointegration import CointegrationEngine
 from aphelion.features.halftrend import HalfTrendCalculator
 from aphelion.features.registry import get_registry, FeatureRecord
+from aphelion.features.signature import SignatureTransform
+from aphelion.features.cross_impact import CrossImpactMatrix
 
 
 class FeatureEngine:
@@ -45,6 +47,8 @@ class FeatureEngine:
         self._mtf = MTFAlignmentEngine()
         self._cointegration = CointegrationEngine()
         self._halftrend = HalfTrendCalculator()
+        self._signature = SignatureTransform()
+        self._cross_impact = CrossImpactMatrix()
         self._registry = get_registry()
 
         # Technical indicator caches
@@ -53,6 +57,7 @@ class FeatureEngine:
 
         # External data for cointegration (populated by ATLAS/DATA)
         self._external_prices: dict[str, np.ndarray] = {}
+        self._external_order_flow: dict[str, np.ndarray] = {}
 
         # v2: tick velocity tracking
         self._last_tick_ts: float = 0.0
@@ -138,14 +143,31 @@ class FeatureEngine:
             )
             features.update(self._halftrend.to_dict(ht_state))
 
-        # 10. Tick velocity (ticks per second)
+        # 10. Signature transform features (iterated integrals up to level 2)
+        features.update(self._compute_signature_features(df))
+
+        # 11. Cross-impact matrix features (XAU driven by correlated instruments)
+        price_map = {"XAUUSD": df["close"].values}
+        if self._external_prices:
+            price_map.update(self._external_prices)
+        if len(price_map) > 1:
+            features.update(
+                self._cross_impact.fit(
+                    price_series=price_map,
+                    order_flow_series=self._external_order_flow if self._external_order_flow else None,
+                )
+            )
+        else:
+            features.update(self._cross_impact.zero_features())
+
+        # 12. Tick velocity (ticks per second)
         if self._tick_intervals:
             avg_interval = np.mean(self._tick_intervals[-50:])
             features["tick_velocity"] = 1.0 / avg_interval if avg_interval > 0 else 0.0
         else:
             features["tick_velocity"] = 0.0
 
-        # 11. Efficiency ratio (Kaufman) — directional movement / total movement
+        # 13. Efficiency ratio (Kaufman) — directional movement / total movement
         _closes = df["close"].values
         if len(_closes) >= 20:
             direction_move = abs(_closes[-1] - _closes[-20])
@@ -187,6 +209,10 @@ class FeatureEngine:
         """Set external asset prices for cointegration analysis."""
         self._external_prices[symbol] = prices
 
+    def set_external_order_flow(self, symbol: str, signed_flow: np.ndarray) -> None:
+        """Set external signed order-flow series for cross-impact estimation."""
+        self._external_order_flow[symbol] = signed_flow
+
     def set_mtf_weights(self, weights: dict[Timeframe, float]) -> None:
         """Set dynamic MTF weights from MERIDIAN."""
         self._mtf.set_weights(weights)
@@ -196,6 +222,15 @@ class FeatureEngine:
         for vwap in self._vwap.values():
             vwap.reset_session()
         self._volume.reset_session()
+
+    def _compute_signature_features(self, df: pd.DataFrame) -> dict:
+        closes = df["close"].values
+        volumes = df["volume"].values if "volume" in df.columns else np.ones(len(closes))
+        if "spread" in df.columns:
+            spread = df["spread"].values
+        else:
+            spread = df["high"].values - df["low"].values
+        return self._signature.compute(closes, volumes, spread)
 
     def _compute_technicals(self, df: pd.DataFrame, tf: Timeframe) -> dict:
         """Compute standard technical indicators."""

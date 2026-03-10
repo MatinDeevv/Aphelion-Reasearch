@@ -52,11 +52,22 @@ try:
         HydraStrategy,
         StrategyConfig,
     )
+    from aphelion.intelligence.hydra.online import (
+        OnlineLearner,
+        OnlineConfig,
+        OnlineStats,
+        OnlineExperience,
+    )
     from aphelion.intelligence.hydra.calibration import (
         IsotonicCalibrator,
         DisagreementDetector,
         DynamicEnsembleWeights,
         CalibrationResult,
+    )
+    from aphelion.intelligence.hydra.adversarial import (
+        AdversarialConfig,
+        AdversarialAssessment,
+        AdversarialFeaturePerturbationDetector,
     )
     from aphelion.intelligence.hydra.xgb_model import (
         HydraXGBoost,
@@ -83,6 +94,8 @@ try:
         # Calibration & Disagreement
         "IsotonicCalibrator", "DisagreementDetector",
         "DynamicEnsembleWeights", "CalibrationResult",
+        # Adversarial robustness
+        "AdversarialConfig", "AdversarialAssessment", "AdversarialFeaturePerturbationDetector",
         # Data
         "HydraDataset", "DatasetConfig",
         "create_dataloaders", "build_dataset_from_feature_dicts",
@@ -92,6 +105,8 @@ try:
         # Inference & Strategy
         "HydraInference", "InferenceConfig", "HydraSignal",
         "HydraStrategy", "StrategyConfig",
+        # Online Learning
+        "OnlineLearner", "OnlineConfig", "OnlineStats", "OnlineExperience",
         # Availability flag
         "HAS_TORCH",
     ]

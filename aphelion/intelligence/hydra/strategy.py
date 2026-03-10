@@ -35,6 +35,7 @@ class StrategyConfig:
     signal_cooldown_bars: int = 5          # Min bars between new trades
     max_open_positions: int = 3            # SENTINEL max simultaneous
     uncertainty_ceiling: float = 0.8       # Reject signals with high uncertainty
+    max_adversarial_risk: float = 0.75     # Reject if adversarial boundary is too close
     # Regime-adaptive confidence tuning
     regime_trend_bonus: float = 0.05       # Boost confidence when TREND regime dominant
     regime_range_penalty: float = 0.03     # Penalize confidence in RANGE-dominant regimes
@@ -107,6 +108,10 @@ class HydraStrategy:
 
         # Uncertainty too high
         if signal.uncertainty > self._config.uncertainty_ceiling:
+            return []
+
+        # Adversarial robustness guard
+        if signal.adversarial_risk > self._config.max_adversarial_risk:
             return []
 
         # Cooldown not elapsed

@@ -1,8 +1,17 @@
 """
-APHELION Backtest Metrics
+APHELION Backtest Metrics  (v3 — upgraded)
 Full institutional-grade performance metric suite.
 Sharpe, DSR, Calmar, Sortino, Omega, Profit Factor, Expectancy,
-R-multiple distribution, monthly P&L, and deployment scoring.
+R-multiple distribution, monthly P&L, deployment scoring,
+Information Ratio, Burke Ratio, Ulcer Index, Tail Ratio, Pain Index.
+
+New v3 algorithms:
+  - Information Ratio: excess return / tracking error vs benchmark
+  - Burke Ratio: return / sqrt(sum of squared drawdowns)
+  - Ulcer Index: RMS of percentage drawdowns (captures duration + depth)
+  - Tail Ratio: p95/p5 ratio — skew in favour of large gains
+  - Pain Index: mean of all percentage drawdowns
+  - Gain-to-Pain Ratio: total return / sum of abs(negative returns)
 """
 
 from __future__ import annotations
@@ -119,6 +128,127 @@ def omega_ratio(
     if losses == 0:
         return float("inf") if gains > 0 else 0.0
     return float(gains / losses)
+
+
+def information_ratio(
+    daily_returns: list[float],
+    benchmark_returns: Optional[list[float]] = None,
+    trading_days: int = 252,
+) -> float:
+    """
+    Information Ratio: annualised excess return / tracking error.
+    If no benchmark provided, uses zero benchmark (equivalent to Sharpe with rf=0).
+    """
+    if len(daily_returns) < 2:
+        return 0.0
+    arr = np.array(daily_returns, dtype=np.float64)
+    if benchmark_returns is not None and len(benchmark_returns) == len(daily_returns):
+        bench = np.array(benchmark_returns, dtype=np.float64)
+    else:
+        bench = np.zeros_like(arr)
+    excess = arr - bench
+    te = float(np.std(excess, ddof=1))
+    if te < 1e-10:
+        return 0.0
+    return float(np.mean(excess)) / te * math.sqrt(trading_days)
+
+
+def burke_ratio(
+    equity_curve: list[float],
+    total_return_pct: float,
+    years: float = 1.0,
+    n_largest: int = 5,
+) -> float:
+    """
+    Burke Ratio: annualised return / sqrt(sum of squared drawdowns).
+    Uses the n_largest drawdowns as penalty. Lower drawdown concentration → higher Burke.
+    """
+    if len(equity_curve) < 2 or years <= 0:
+        return 0.0
+    arr = np.array(equity_curve, dtype=np.float64)
+    peak = np.maximum.accumulate(arr)
+    dd_pct = np.where(peak > 0, (peak - arr) / peak * 100, 0.0)
+    # Get the n_largest unique drawdowns (peaks of drawdown series)
+    dd_peaks = []
+    in_dd = False
+    current_max = 0.0
+    for d in dd_pct:
+        if d > 0:
+            in_dd = True
+            current_max = max(current_max, d)
+        elif in_dd:
+            dd_peaks.append(current_max)
+            current_max = 0.0
+            in_dd = False
+    if in_dd:
+        dd_peaks.append(current_max)
+
+    if not dd_peaks:
+        return float("inf") if total_return_pct > 0 else 0.0
+    dd_peaks.sort(reverse=True)
+    top_dd = dd_peaks[:n_largest]
+    sum_sq = sum(d ** 2 for d in top_dd)
+    if sum_sq <= 0:
+        return 0.0
+    annual_ret = total_return_pct / years
+    return annual_ret / math.sqrt(sum_sq)
+
+
+def ulcer_index(equity_curve: list[float]) -> float:
+    """
+    Ulcer Index: RMS of percentage drawdowns from equity highs.
+    Captures both depth and duration of drawdowns.
+    Lower is better. Typical values: 1-5% for good strategies.
+    """
+    if len(equity_curve) < 2:
+        return 0.0
+    arr = np.array(equity_curve, dtype=np.float64)
+    peak = np.maximum.accumulate(arr)
+    dd_pct = np.where(peak > 0, (peak - arr) / peak * 100, 0.0)
+    return float(np.sqrt(np.mean(dd_pct ** 2)))
+
+
+def tail_ratio(daily_returns: list[float], alpha: float = 5.0) -> float:
+    """
+    Tail Ratio: |p95 percentile| / |p5 percentile|.
+    > 1.0 means larger upside tails than downside → positive skew in extremes.
+    """
+    if len(daily_returns) < 20:
+        return 1.0
+    arr = np.array(daily_returns, dtype=np.float64)
+    p95 = float(np.percentile(arr, 100 - alpha))
+    p5 = float(np.percentile(arr, alpha))
+    if abs(p5) < 1e-10:
+        return float("inf") if p95 > 0 else 1.0
+    return abs(p95 / p5)
+
+
+def pain_index(equity_curve: list[float]) -> float:
+    """
+    Pain Index: mean percentage drawdown.
+    Simpler than Ulcer Index, represents the average pain experienced.
+    """
+    if len(equity_curve) < 2:
+        return 0.0
+    arr = np.array(equity_curve, dtype=np.float64)
+    peak = np.maximum.accumulate(arr)
+    dd_pct = np.where(peak > 0, (peak - arr) / peak * 100, 0.0)
+    return float(np.mean(dd_pct))
+
+
+def gain_to_pain_ratio(daily_returns: list[float]) -> float:
+    """
+    Gain-to-Pain Ratio: sum(all returns) / sum(abs(negative returns)).
+    > 1.0 means gross gains exceed gross pain. Favoured by CTAs.
+    """
+    if not daily_returns:
+        return 0.0
+    arr = np.array(daily_returns, dtype=np.float64)
+    total = float(np.sum(arr))
+    pain = float(np.sum(np.abs(arr[arr < 0])))
+    if pain < 1e-10:
+        return float("inf") if total > 0 else 0.0
+    return total / pain
 
 
 def profit_factor(trades: list[BacktestTrade]) -> float:
@@ -284,6 +414,14 @@ class BacktestMetrics:
     total_slippage: float = 0.0
     cost_to_gross_profit_pct: float = 0.0
 
+    # v3: Advanced risk metrics
+    information_ratio: float = 0.0
+    burke_ratio: float = 0.0
+    ulcer_index: float = 0.0
+    tail_ratio: float = 1.0
+    pain_index: float = 0.0
+    gain_to_pain: float = 0.0
+
     # Breakdowns
     monthly_pnl: dict = field(default_factory=dict)
     hourly_pnl: dict = field(default_factory=dict)
@@ -381,6 +519,14 @@ def compute_metrics(
         m.total_slippage = broker_stats.get("total_slippage_cost", 0.0)
     else:
         m.total_commission = sum(t.commission for t in trades)
+
+    # v3: Advanced risk metrics
+    m.information_ratio = information_ratio(daily_returns)
+    m.burke_ratio = burke_ratio(equity_curve, m.total_return_pct, years)
+    m.ulcer_index = ulcer_index(equity_curve)
+    m.tail_ratio = tail_ratio(daily_returns)
+    m.pain_index = pain_index(equity_curve)
+    m.gain_to_pain = gain_to_pain_ratio(daily_returns)
 
     # Breakdowns
     m.monthly_pnl = monthly_pnl(trades)

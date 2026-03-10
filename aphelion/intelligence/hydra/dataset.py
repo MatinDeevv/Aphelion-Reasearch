@@ -48,6 +48,28 @@ CONTINUOUS_FEATURES: list[str] = [
     "max_spread_zscore",
     # OHLCV (raw, normalized later)
     "open", "high", "low", "close", "volume",
+    # Advanced microstructure (v8)
+    "hawkes_flow_acceleration",
+    "hawkes_branching_ratio",
+    "tsrv_volatility",
+    "tsrv_noise_ratio",
+    "toxicity_index",
+    # Signature transform features
+    "sig1_price",
+    "sig1_volume",
+    "sig1_spread",
+    "sig2_price_volume",
+    "sig2_price_spread",
+    "sig2_volume_spread",
+    "sig_levy_pv",
+    "sig_l2_frobenius",
+    # Cross-impact features
+    "cross_impact_pred_return",
+    "cross_impact_signal",
+    "cross_impact_strength",
+    "cross_impact_beta_dxy",
+    "cross_impact_beta_tlt",
+    "cross_impact_beta_xagusd",
 ]
 
 CATEGORICAL_FEATURES: list[str] = [

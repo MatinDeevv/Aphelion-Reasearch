@@ -1,7 +1,15 @@
 """
-APHELION Volume Profile Features
-Volume Delta, CVD, POC, VAH/VAL, Delta Divergence, Absorption.
-Section 5.3 of the Engineering Spec.
+APHELION Volume Profile Features  (v3 — upgraded)
+Volume Delta, CVD, POC, VAH/VAL, Delta Divergence, Absorption,
+VWAP Bands, Composite Delta Strength, Session-aware volume clustering.
+
+Algorithms:
+  - Close-open heuristic for bar delta estimation
+  - POC / Value Area via volume-at-price histogram
+  - VWAP ± N*σ bands for mean-reversion levels
+  - Divergence detection with rolling Spearman correlation confirmation
+  - Absorption: volume/range ratio with z-score thresholding
+  - Composite delta strength: normalised CVD momentum
 """
 
 import numpy as np
@@ -19,6 +27,14 @@ class VolumeProfileState:
     val: float = 0.0           # Value Area Low
     delta_divergence: bool = False
     absorption: bool = False
+    # v3 additions
+    vwap: float = 0.0
+    vwap_upper_1: float = 0.0   # VWAP + 1σ
+    vwap_lower_1: float = 0.0   # VWAP - 1σ
+    vwap_upper_2: float = 0.0   # VWAP + 2σ
+    vwap_lower_2: float = 0.0   # VWAP - 2σ
+    delta_strength: float = 0.0  # Normalised CVD momentum [-1, 1]
+    volume_concentration: float = 0.0  # How concentrated volume is around POC
 
 
 class VolumeDeltaCalculator:
@@ -62,7 +78,8 @@ class VolumeDeltaCalculator:
     def detect_divergence(self, price_highs: np.ndarray, n: int = 20) -> bool:
         """
         Delta divergence: price making new high while CVD making lower high.
-        Classic distribution signal.
+        v3: confirmed with Spearman rank correlation — divergence only
+        when price/CVD correlation breaks down (rho < 0.3).
         """
         if len(self._prices) < n or len(self._deltas) < n:
             return False
@@ -75,7 +92,34 @@ class VolumeDeltaCalculator:
         price_at_high = prices[-1] >= np.max(prices[:-1]) * 0.999
         cvd_below_high = cvd[-1] < np.max(cvd[:-1]) * 0.95
 
-        return price_at_high and cvd_below_high
+        if not (price_at_high and cvd_below_high):
+            return False
+
+        # v3: Spearman rank correlation confirmation
+        from scipy.stats import spearmanr
+        try:
+            rho, _ = spearmanr(prices, cvd)
+            # Divergence confirmed when correlation has broken down
+            return rho < 0.3
+        except Exception:
+            return price_at_high and cvd_below_high
+
+    def delta_strength(self, lookback: int = 20) -> float:
+        """
+        Normalised CVD momentum in [-1, 1].
+        Positive = sustained buying, Negative = sustained selling.
+        Uses z-score of recent CVD change vs rolling std.
+        """
+        if len(self._deltas) < lookback:
+            return 0.0
+        recent = np.array(list(self._deltas)[-lookback:])
+        cvd = np.cumsum(recent)
+        cvd_change = cvd[-1] - cvd[0]
+        std = np.std(recent) * np.sqrt(lookback)
+        if std < 1e-12:
+            return 0.0
+        z = cvd_change / std
+        return float(np.clip(z / 3.0, -1.0, 1.0))  # Normalise to [-1,1]
 
 
 class VolumeProfileCalculator:
@@ -153,7 +197,14 @@ class VolumeProfileCalculator:
         val = bin_edges[low_idx]
         vah = bin_edges[high_idx + 1]
 
-        return {"poc": poc, "vah": vah, "val": val}
+        # v3: Volume concentration — Herfindahl-like measure
+        # How concentrated is volume around POC? 1.0 = all at one level, ~0 = dispersed
+        vol_fractions = bin_volumes / total_vol
+        concentration = float(np.sum(vol_fractions ** 2) * self._n_bins)
+        # Normalise: 1/n_bins (uniform) → 0.0, 1.0 (all at one bin) → n_bins
+        concentration = min(concentration / self._n_bins, 1.0)
+
+        return {"poc": poc, "vah": vah, "val": val, "volume_concentration": concentration}
 
 
 class AbsorptionDetector:
@@ -193,13 +244,17 @@ class AbsorptionDetector:
 
 
 class VolumeProfileEngine:
-    """Computes all volume profile features."""
+    """Computes all volume profile features (v3)."""
 
     def __init__(self):
         self._delta = VolumeDeltaCalculator()
         self._profile = VolumeProfileCalculator()
         self._absorption = AbsorptionDetector()
         self._state = VolumeProfileState()
+        # v3: VWAP tracking
+        self._cum_pv: float = 0.0   # cumulative(price * volume)
+        self._cum_pv2: float = 0.0  # cumulative(price^2 * volume)
+        self._cum_vol: float = 0.0  # cumulative volume
 
     def update_bar(self, open_price: float, high: float, low: float,
                    close: float, volume: float) -> VolumeProfileState:
@@ -211,12 +266,32 @@ class VolumeProfileEngine:
         self._state.absorption = self._absorption.check(
             high, low, close, open_price, volume
         )
+
+        # v3: VWAP bands
+        typical_price = (high + low + close) / 3.0
+        self._cum_pv += typical_price * volume
+        self._cum_pv2 += (typical_price ** 2) * volume
+        self._cum_vol += volume
+
+        if self._cum_vol > 0:
+            vwap = self._cum_pv / self._cum_vol
+            variance = self._cum_pv2 / self._cum_vol - vwap ** 2
+            std = np.sqrt(max(variance, 0.0))
+            self._state.vwap = vwap
+            self._state.vwap_upper_1 = vwap + std
+            self._state.vwap_lower_1 = vwap - std
+            self._state.vwap_upper_2 = vwap + 2 * std
+            self._state.vwap_lower_2 = vwap - 2 * std
+
+        # v3: Delta strength
+        self._state.delta_strength = self._delta.delta_strength()
+
         return self._state
 
     def compute_session_profile(self, df: pd.DataFrame) -> dict:
         """Compute full session volume profile."""
         if df.empty:
-            return {"poc": 0, "vah": 0, "val": 0}
+            return {"poc": 0, "vah": 0, "val": 0, "volume_concentration": 0}
 
         result = self._profile.compute(
             df["high"].values,
@@ -228,6 +303,7 @@ class VolumeProfileEngine:
         self._state.poc = result["poc"]
         self._state.vah = result["vah"]
         self._state.val = result["val"]
+        self._state.volume_concentration = result.get("volume_concentration", 0.0)
         return result
 
     def check_divergence(self, price_highs: np.ndarray) -> bool:
@@ -236,6 +312,10 @@ class VolumeProfileEngine:
 
     def reset_session(self) -> None:
         self._delta.reset_session()
+        # v3: Reset VWAP accumulators for new session
+        self._cum_pv = 0.0
+        self._cum_pv2 = 0.0
+        self._cum_vol = 0.0
 
     def to_dict(self) -> dict:
         return {
@@ -246,4 +326,11 @@ class VolumeProfileEngine:
             "val": self._state.val,
             "delta_divergence": self._state.delta_divergence,
             "absorption": self._state.absorption,
+            "vwap": self._state.vwap,
+            "vwap_upper_1": self._state.vwap_upper_1,
+            "vwap_lower_1": self._state.vwap_lower_1,
+            "vwap_upper_2": self._state.vwap_upper_2,
+            "vwap_lower_2": self._state.vwap_lower_2,
+            "delta_strength": self._state.delta_strength,
+            "volume_concentration": self._state.volume_concentration,
         }
