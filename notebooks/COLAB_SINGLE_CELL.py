@@ -143,7 +143,7 @@ from aphelion.intelligence.hydra.tcn import TCNConfig
 from aphelion.intelligence.hydra.transformer import TransformerConfig
 from aphelion.intelligence.hydra.dataset import (
     CONTINUOUS_FEATURES, DatasetConfig,
-    build_dataset_from_feature_dicts, create_dataloaders,
+    build_dataset_from_dataframe, build_dataset_from_feature_dicts, create_dataloaders,
 )
 from scripts.train_hydra import load_real_data, build_full_ensemble_config
 
@@ -258,10 +258,10 @@ def run_one_round(data_file, max_epochs, tag, description):
     # Load data
     df = load_real_data(data_file)
     n_bars = len(df)
-    feature_dicts = df.to_dict(orient="records")
     close_prices = df["close"].values
 
-    # Build datasets — num_workers=0 is REQUIRED for Colab exec() context
+    # Build datasets — DataFrame path avoids df.to_dict(orient="records") overhead.
+    # num_workers=0 is REQUIRED for Colab exec() context
     # (multiprocessing workers crash with 'can only test a child process')
     ds_config = DatasetConfig(
         val_split=0.15,
@@ -270,8 +270,8 @@ def run_one_round(data_file, max_epochs, tag, description):
         num_workers=0,
         lookback_bars=64,
     )
-    train_ds, val_ds, test_ds, means, stds = build_dataset_from_feature_dicts(
-        feature_dicts, close_prices, config=ds_config,
+    train_ds, val_ds, test_ds, means, stds = build_dataset_from_dataframe(
+        df, close_prices, config=ds_config,
     )
     print(f"  Dataset: Train={len(train_ds):,}, Val={len(val_ds):,}, Test={len(test_ds):,}")
 
