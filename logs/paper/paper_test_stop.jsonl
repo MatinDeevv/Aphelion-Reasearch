@@ -160,3 +160,9 @@
 {"ts": "2026-03-11T00:45:17.298355+00:00", "session": "test_stop", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_stop", "ledger_path": "logs\\paper\\paper_test_stop.jsonl"}}
 {"ts": "2026-03-11T00:45:17.298563+00:00", "session": "test_stop", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
 {"ts": "2026-03-11T00:45:17.312926+00:00", "session": "test_stop", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 14, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0, "ares_vetoes": 0, "ares_decisions": 0}}
+{"ts": "2026-03-11T01:14:52.687496+00:00", "session": "test_stop", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_stop", "ledger_path": "logs\\paper\\paper_test_stop.jsonl"}}
+{"ts": "2026-03-11T01:14:52.688612+00:00", "session": "test_stop", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
+{"ts": "2026-03-11T01:14:52.720245+00:00", "session": "test_stop", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 6, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0, "ares_vetoes": 0, "ares_decisions": 0}}
+{"ts": "2026-03-11T01:28:23.069758+00:00", "session": "test_stop", "seq": 0, "type": "SESSION_START", "data": {"session_id": "test_stop", "ledger_path": "logs\\paper\\paper_test_stop.jsonl"}}
+{"ts": "2026-03-11T01:28:23.070129+00:00", "session": "test_stop", "seq": 1, "type": "RUN_START", "data": {"config": {"initial_capital": 10000.0, "warmup_bars": 5, "hydra_checkpoint": "", "symbol": "XAUUSD"}}}
+{"ts": "2026-03-11T01:28:23.091447+00:00", "session": "test_stop", "seq": 2, "type": "SESSION_END", "data": {"bars_processed": 7, "errors": 0, "final_equity": 10000.0, "trades": 0, "fills": 0, "rejections": 0, "ares_vetoes": 0, "ares_decisions": 0}}

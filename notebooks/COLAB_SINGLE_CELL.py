@@ -73,14 +73,11 @@ print("=" * 70)
 REPO_URL = "https://github.com/MatinDeevv/Aphelion-Reasearch.git"
 PROJECT = "/content/Aphelion-Reasearch"
 
-if os.path.exists(os.path.join(PROJECT, 'aphelion', 'intelligence', 'hydra', 'ensemble.py')):
-    print("  Repo already cloned, skipping...")
-else:
-    if os.path.exists(PROJECT):
-        shutil.rmtree(PROJECT)
-    print(f"  Cloning {REPO_URL} ...")
-    subprocess.run(['git', 'clone', '--depth', '1', REPO_URL, PROJECT], check=True)
-    print("  ✓ Clone complete")
+if os.path.exists(PROJECT):
+    shutil.rmtree(PROJECT)
+print(f"  Cloning {REPO_URL} (fresh) ...")
+subprocess.run(['git', 'clone', '--depth', '1', REPO_URL, PROJECT], check=True)
+print("  Clone complete")
 
 os.chdir(PROJECT)
 print(f"  Project root: {PROJECT}")
