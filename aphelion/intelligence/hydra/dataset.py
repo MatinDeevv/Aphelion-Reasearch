@@ -99,6 +99,8 @@ class DatasetConfig:
     test_split: float = 0.15          # Test fraction
     batch_size: int = 256
     num_workers: int = 0              # 0 for Windows compatibility
+    persistent_workers: bool = True   # Keep workers alive between epochs (num_workers > 0 only)
+    prefetch_factor: int = 4          # Batches to prefetch per worker (num_workers > 0 only)
 
 
 def _extract_features_from_bar_dict(
@@ -134,66 +136,63 @@ def _extract_features_from_bar_dict(
     return cont, cat
 
 
-def build_dataset_from_feature_dicts(
-    feature_dicts: list[dict],
-    close_prices: np.ndarray,
-    config: Optional[DatasetConfig] = None,
-) -> tuple:
+def _extract_matrices_from_dataframe(
+    df: "pd.DataFrame",
+    n_bars: int,
+) -> "tuple[np.ndarray, np.ndarray]":
     """
-    Build train/val/test datasets from a list of feature dicts
-    (one per bar, from FeatureEngine.on_bar()).
-
-    Args:
-        feature_dicts: List of feature dicts, one per bar (chronological).
-        close_prices: Array of close prices corresponding to each bar.
-        config: Dataset configuration.
+    Vectorized extraction of continuous and categorical feature matrices
+    directly from a pandas DataFrame.  Called by both
+    ``build_dataset_from_dataframe`` and ``build_dataset_from_feature_dicts``.
 
     Returns:
-        (train_dataset, val_dataset, test_dataset, feature_means, feature_stds)
+        cont_matrix: float32 array of shape (n_bars, n_cont)
+        cat_matrix:  int64  array of shape (n_bars, n_cat)
     """
-    if not HAS_TORCH:
-        raise ImportError("PyTorch required. Install with: pip install -e '.[ml]'")
+    import pandas as pd  # local import — keeps module importable without pandas
 
-    config = config or DatasetConfig()
-    n_bars = len(feature_dicts)
     n_cont = len(CONTINUOUS_FEATURES)
     n_cat = len(CATEGORICAL_FEATURES)
+
+    cont_matrix = np.zeros((n_bars, n_cont), dtype=np.float32)
+    for i, key in enumerate(CONTINUOUS_FEATURES):
+        if key in df.columns:
+            col = pd.to_numeric(df[key], errors="coerce").values.astype(np.float32)
+            bad_mask = ~np.isfinite(col)
+            if bad_mask.any():
+                col[bad_mask] = 0.0
+            cont_matrix[:, i] = col
+
+    cat_matrix = np.zeros((n_bars, n_cat), dtype=np.int64)
+    if "session" in df.columns:
+        cat_matrix[:, 0] = df["session"].map(
+            lambda x: SESSION_MAP.get(x, 4) if isinstance(x, str) else 4
+        ).values
+    if "day_of_week" in df.columns:
+        cat_matrix[:, 1] = df["day_of_week"].map(
+            lambda x: DAY_MAP.get(x, 0) if isinstance(x, str) else 0
+        ).values
+
+    return cont_matrix, cat_matrix
+
+
+def _build_splits_from_matrices(
+    cont_matrix: np.ndarray,
+    cat_matrix: np.ndarray,
+    close_prices: np.ndarray,
+    config: "DatasetConfig",
+) -> tuple:
+    """
+    Shared logic: normalize features (training slice only), compute
+    multi-horizon direction labels, and create train/val/test splits.
+
+    Returns:
+        (train_ds, val_ds, test_ds, feature_means, feature_stds)
+    """
+    n_bars = len(close_prices)
     max_horizon = max(config.horizon_5m, config.horizon_15m, config.horizon_1h)
 
-    # OPTIMIZED: Vectorized feature extraction using pandas DataFrame
-    # Avoids 100K+ Python dict lookups per feature
-    import pandas as pd
-    if isinstance(feature_dicts, list) and len(feature_dicts) > 0:
-        # Convert list of dicts to DataFrame in one shot
-        df_features = pd.DataFrame(feature_dicts)
-
-        # Extract continuous features — vectorized
-        cont_matrix = np.zeros((n_bars, n_cont), dtype=np.float32)
-        for i, key in enumerate(CONTINUOUS_FEATURES):
-            if key in df_features.columns:
-                col = pd.to_numeric(df_features[key], errors='coerce').values.astype(np.float32)
-                # Replace NaN/Inf with 0
-                bad_mask = ~np.isfinite(col)
-                if bad_mask.any():
-                    col[bad_mask] = 0.0
-                cont_matrix[:, i] = col
-
-        # Extract categorical features — vectorized
-        cat_matrix = np.zeros((n_bars, n_cat), dtype=np.int64)
-        if 'session' in df_features.columns:
-            cat_matrix[:, 0] = df_features['session'].map(
-                lambda x: SESSION_MAP.get(x, 4) if isinstance(x, str) else 4
-            ).values
-        if 'day_of_week' in df_features.columns:
-            cat_matrix[:, 1] = df_features['day_of_week'].map(
-                lambda x: DAY_MAP.get(x, 0) if isinstance(x, str) else 0
-            ).values
-    else:
-        cont_matrix = np.zeros((n_bars, n_cont), dtype=np.float32)
-        cat_matrix = np.zeros((n_bars, n_cat), dtype=np.int64)
-
-    # Normalize continuous features (z-score)
-    # Use only training portion for stats to prevent leakage
+    # Normalize continuous features (z-score, training slice only)
     n_usable = n_bars - max_horizon
     train_end = int(n_usable * (1 - config.val_split - config.test_split))
 
@@ -266,6 +265,85 @@ def build_dataset_from_feature_dicts(
     return train_ds, val_ds, test_ds, feature_means, feature_stds
 
 
+def build_dataset_from_dataframe(
+    df: "pd.DataFrame",
+    config: Optional[DatasetConfig] = None,
+) -> tuple:
+    """
+    Build train/val/test datasets directly from a pandas DataFrame.
+
+    This is the preferred path for real training runs.  It skips the
+    ``DataFrame → list[dict] → DataFrame`` roundtrip that
+    ``build_dataset_from_feature_dicts`` requires, eliminating the large
+    CPU and RAM overhead for big datasets.
+
+    Args:
+        df: DataFrame with one row per bar.  Must contain at least a
+            ``"close"`` column plus any features listed in
+            ``CONTINUOUS_FEATURES`` / ``CATEGORICAL_FEATURES``.
+        config: Dataset configuration.
+
+    Returns:
+        (train_dataset, val_dataset, test_dataset, feature_means, feature_stds)
+    """
+    if not HAS_TORCH:
+        raise ImportError("PyTorch required. Install with: pip install -e '.[ml]'")
+
+    config = config or DatasetConfig()
+    n_bars = len(df)
+
+    if "close" not in df.columns:
+        raise ValueError(
+            "DataFrame must contain a 'close' column for price label computation."
+        )
+    close_prices = df["close"].values.astype(np.float64)
+
+    cont_matrix, cat_matrix = _extract_matrices_from_dataframe(df, n_bars)
+
+    return _build_splits_from_matrices(cont_matrix, cat_matrix, close_prices, config)
+
+
+def build_dataset_from_feature_dicts(
+    feature_dicts: list[dict],
+    close_prices: np.ndarray,
+    config: Optional[DatasetConfig] = None,
+) -> tuple:
+    """
+    Build train/val/test datasets from a list of feature dicts
+    (one per bar, from FeatureEngine.on_bar()).
+
+    For new code that already has a pandas DataFrame, prefer
+    ``build_dataset_from_dataframe`` which avoids the list-of-dicts
+    conversion overhead.
+
+    Args:
+        feature_dicts: List of feature dicts, one per bar (chronological).
+        close_prices: Array of close prices corresponding to each bar.
+        config: Dataset configuration.
+
+    Returns:
+        (train_dataset, val_dataset, test_dataset, feature_means, feature_stds)
+    """
+    if not HAS_TORCH:
+        raise ImportError("PyTorch required. Install with: pip install -e '.[ml]'")
+
+    import pandas as pd
+
+    config = config or DatasetConfig()
+    n_bars = len(feature_dicts)
+
+    if n_bars > 0:
+        df_features = pd.DataFrame(feature_dicts)
+        cont_matrix, cat_matrix = _extract_matrices_from_dataframe(df_features, n_bars)
+    else:
+        n_cont = len(CONTINUOUS_FEATURES)
+        n_cat = len(CATEGORICAL_FEATURES)
+        cont_matrix = np.zeros((n_bars, n_cont), dtype=np.float32)
+        cat_matrix = np.zeros((n_bars, n_cat), dtype=np.int64)
+
+    return _build_splits_from_matrices(cont_matrix, cat_matrix, close_prices, config)
+
+
 class HydraDataset:
     """
     OPTIMIZED PyTorch-compatible dataset for TFT training.
@@ -319,21 +397,34 @@ def create_dataloaders(
     train_ds, val_ds, test_ds,
     config: Optional[DatasetConfig] = None,
 ) -> tuple:
-    """Create train/val/test DataLoaders."""
+    """Create train/val/test DataLoaders.
+
+    When ``config.num_workers > 0``, ``persistent_workers`` and
+    ``prefetch_factor`` are applied automatically to avoid worker
+    restart overhead and keep the GPU fed.  When ``num_workers == 0``
+    those options are silently ignored (they are not valid in that case).
+    """
     if not HAS_TORCH:
         raise ImportError("PyTorch required")
 
     config = config or DatasetConfig()
+
+    loader_kwargs: dict = dict(
+        batch_size=config.batch_size,
+        num_workers=config.num_workers,
+        pin_memory=True,
+    )
+    if config.num_workers > 0:
+        loader_kwargs["persistent_workers"] = config.persistent_workers
+        loader_kwargs["prefetch_factor"] = config.prefetch_factor
+
     train_loader = DataLoader(
-        train_ds, batch_size=config.batch_size, shuffle=True,
-        num_workers=config.num_workers, pin_memory=True, drop_last=True,
+        train_ds, shuffle=True, drop_last=True, **loader_kwargs,
     )
     val_loader = DataLoader(
-        val_ds, batch_size=config.batch_size, shuffle=False,
-        num_workers=config.num_workers, pin_memory=True,
+        val_ds, shuffle=False, **loader_kwargs,
     )
     test_loader = DataLoader(
-        test_ds, batch_size=config.batch_size, shuffle=False,
-        num_workers=config.num_workers, pin_memory=True,
+        test_ds, shuffle=False, **loader_kwargs,
     )
     return train_loader, val_loader, test_loader

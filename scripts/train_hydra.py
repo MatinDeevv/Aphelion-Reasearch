@@ -24,6 +24,7 @@ from loguru import logger
 from aphelion.intelligence.hydra.dataset import (
     CONTINUOUS_FEATURES,
     DatasetConfig,
+    build_dataset_from_dataframe,
     build_dataset_from_feature_dicts,
     create_dataloaders,
 )
@@ -292,12 +293,15 @@ def run_training(
     full_model: bool = False,
     checkpoint_dir: str = "models/hydra",
     data_csv: str = "",
+    num_workers: int = -1,
 ) -> dict:
     """
     Run the full training pipeline.
 
     Args:
         data_csv: Path to a CSV with real OHLCV data. If empty, uses synthetic data.
+        num_workers: DataLoader worker count.  Pass -1 (default) to auto-detect
+            (4 workers when CUDA is available, 0 otherwise).
 
     Returns:
         Training result metrics dict.
@@ -313,20 +317,23 @@ def run_training(
         df = generate_synthetic_data(n_bars)
         logger.info(f"Using SYNTHETIC data: {n_bars:,} bars")
 
-    feature_dicts = df.to_dict(orient="records")
-    close_prices = df["close"].values
-
     # 2. Build datasets
     logger.info("Building HYDRA datasets...")
+
+    import torch as _torch
+    if num_workers < 0:
+        # Auto-detect: use 4 workers on CUDA (A100/GPU), 0 otherwise
+        num_workers = 4 if _torch.cuda.is_available() else 0
+
     ds_config = DatasetConfig(
         val_split=0.15,
         test_split=0.15,
         batch_size=batch_size,
-        num_workers=0,
+        num_workers=num_workers,
         lookback_bars=32 if not full_model else 64,
     )
-    train_ds, val_ds, test_ds, means, stds = build_dataset_from_feature_dicts(
-        feature_dicts, close_prices, config=ds_config,
+    train_ds, val_ds, test_ds, means, stds = build_dataset_from_dataframe(
+        df, config=ds_config,
     )
     logger.info(f"Dataset: Train={len(train_ds)}, Val={len(val_ds)}, Test={len(test_ds)}")
 
@@ -381,6 +388,10 @@ def main():
     parser.add_argument("--epochs", type=int, default=None, help="Override epoch count")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
     parser.add_argument("--checkpoint-dir", type=str, default="models/hydra", help="Checkpoint dir")
+    parser.add_argument(
+        "--num-workers", type=int, default=None,
+        help="DataLoader worker processes (default: 4 if CUDA available, else 0)",
+    )
     args = parser.parse_args()
 
     if args.full:
@@ -392,6 +403,9 @@ def main():
         max_epochs = args.epochs or 2
         full_model = False
 
+    # Resolve num_workers: explicit flag overrides auto-detect (-1)
+    num_workers = args.num_workers if args.num_workers is not None else -1
+
     results = run_training(
         n_bars=n_bars,
         max_epochs=max_epochs,
@@ -399,6 +413,7 @@ def main():
         full_model=full_model,
         checkpoint_dir=args.checkpoint_dir,
         data_csv=args.data,
+        num_workers=num_workers,
     )
 
     if "error" not in results:

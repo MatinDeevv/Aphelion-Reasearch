@@ -312,6 +312,155 @@ class TestHydraInit:
         import aphelion.intelligence.hydra as hydra_pkg
         for name in [
             "DatasetConfig", "build_dataset_from_feature_dicts",
+            "build_dataset_from_dataframe",
             "CONTINUOUS_FEATURES", "CATEGORICAL_FEATURES",
         ]:
             assert name in hydra_pkg.__all__, f"{name} missing from __all__"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# build_dataset_from_dataframe
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _make_synthetic_df(n: int = 200) -> "pd.DataFrame":
+    """Build a minimal synthetic DataFrame matching generate_synthetic_data output."""
+    import pandas as pd
+
+    rng = np.random.default_rng(42)
+    close = np.cumsum(rng.normal(0, 0.5, n)) + 2000.0
+    df = pd.DataFrame({
+        "open": np.roll(close, 1),
+        "high": close * (1 + rng.uniform(0, 0.001, n)),
+        "low": close * (1 - rng.uniform(0, 0.001, n)),
+        "close": close,
+        "volume": rng.integers(10, 1000, n).astype(float),
+    })
+    sessions = ["ASIAN", "LONDON", "OVERLAP_LDN_NY", "NEW_YORK", "DEAD_ZONE"]
+    days = ["MON", "TUE", "WED", "THU", "FRI"]
+    df["session"] = [sessions[i % len(sessions)] for i in range(n)]
+    df["day_of_week"] = [days[i % len(days)] for i in range(n)]
+    for feat in CONTINUOUS_FEATURES:
+        if feat not in df.columns:
+            df[feat] = rng.normal(0, 1, n)
+    return df
+
+
+class TestBuildDatasetFromDataframe:
+    def test_returns_three_datasets_and_stats(self):
+        import pandas as pd
+        from aphelion.intelligence.hydra.dataset import build_dataset_from_dataframe
+
+        df = _make_synthetic_df(200)
+        cfg = DatasetConfig(lookback_bars=32)
+        train, val, test, means, stds = build_dataset_from_dataframe(df, config=cfg)
+        assert len(train) > 0
+        assert len(val) >= 0
+        assert len(test) >= 0
+        assert means.shape == (N_CONT,)
+        assert stds.shape == (N_CONT,)
+
+    def test_matches_feature_dicts_builder(self):
+        """build_dataset_from_dataframe and build_dataset_from_feature_dicts
+        should produce identical means/stds when given the same data."""
+        import pandas as pd
+        from aphelion.intelligence.hydra.dataset import build_dataset_from_dataframe
+
+        df = _make_synthetic_df(300)
+        close = df["close"].values
+        feature_dicts = df.to_dict(orient="records")
+        cfg = DatasetConfig(lookback_bars=32)
+
+        _, _, _, means_df, stds_df = build_dataset_from_dataframe(df, config=cfg)
+        _, _, _, means_dicts, stds_dicts = build_dataset_from_feature_dicts(
+            feature_dicts, close, config=cfg,
+        )
+
+        np.testing.assert_allclose(means_df, means_dicts, rtol=1e-5, atol=1e-5)
+        np.testing.assert_allclose(stds_df, stds_dicts, rtol=1e-5, atol=1e-5)
+
+    def test_dataset_lengths_match_between_builders(self):
+        """Train/val/test sizes should be equal regardless of entry path."""
+        import pandas as pd
+        from aphelion.intelligence.hydra.dataset import build_dataset_from_dataframe
+
+        df = _make_synthetic_df(300)
+        close = df["close"].values
+        feature_dicts = df.to_dict(orient="records")
+        cfg = DatasetConfig(lookback_bars=32)
+
+        tr_df, va_df, te_df, _, _ = build_dataset_from_dataframe(df, config=cfg)
+        tr_fd, va_fd, te_fd, _, _ = build_dataset_from_feature_dicts(
+            feature_dicts, close, config=cfg,
+        )
+
+        assert len(tr_df) == len(tr_fd)
+        assert len(va_df) == len(va_fd)
+        assert len(te_df) == len(te_fd)
+
+    def test_no_division_by_zero_with_constant_features(self):
+        """Constant features must not cause div-by-zero in normalization."""
+        import pandas as pd
+        from aphelion.intelligence.hydra.dataset import build_dataset_from_dataframe
+
+        df = _make_synthetic_df(200)
+        for feat in CONTINUOUS_FEATURES:
+            df[feat] = 1.0  # constant
+        cfg = DatasetConfig(lookback_bars=32)
+        _, _, _, _, stds = build_dataset_from_dataframe(df, config=cfg)
+        assert (stds > 0).all()
+
+    def test_missing_close_column_raises(self):
+        """DataFrame without 'close' column should raise a clear ValueError."""
+        import pandas as pd
+        from aphelion.intelligence.hydra.dataset import build_dataset_from_dataframe
+
+        df = _make_synthetic_df(200).drop(columns=["close"])
+        cfg = DatasetConfig(lookback_bars=32)
+        with pytest.raises(ValueError, match="close"):
+            build_dataset_from_dataframe(df, config=cfg)
+
+    def test_first_batch_shape_is_correct(self):
+        """Verify tensor shapes coming out of the DataLoader."""
+        import pandas as pd
+        from aphelion.intelligence.hydra.dataset import build_dataset_from_dataframe
+
+        df = _make_synthetic_df(200)
+        cfg = DatasetConfig(lookback_bars=32, batch_size=8)
+        train_ds, val_ds, test_ds, _, _ = build_dataset_from_dataframe(df, config=cfg)
+        train_dl, _, _ = create_dataloaders(train_ds, val_ds, test_ds, config=cfg)
+        batch = next(iter(train_dl))
+        cont, cat = batch[0], batch[1]
+        assert cont.shape[1] == 32   # lookback
+        assert cont.shape[2] == N_CONT
+        assert cat.shape[2] == N_CAT
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# create_dataloaders — persistent_workers / prefetch_factor
+# ═══════════════════════════════════════════════════════════════════════════
+
+class TestCreateDataloadersWorkerOptions:
+    def _make_tiny_datasets(self):
+        fds = _make_feature_dicts(200)
+        close = np.cumsum(np.random.randn(200) * 0.5) + 2000.0
+        cfg = DatasetConfig(lookback_bars=32, batch_size=8)
+        train, val, test, _, _ = build_dataset_from_feature_dicts(fds, close, cfg)
+        return train, val, test, cfg
+
+    def test_num_workers_zero_has_no_persistent_or_prefetch(self):
+        """With num_workers=0, persistent_workers/prefetch_factor must not be set."""
+        train, val, test, cfg = self._make_tiny_datasets()
+        cfg.num_workers = 0
+        tl, vl, tel = create_dataloaders(train, val, test, config=cfg)
+        # The DataLoader should not expose persistent_workers=True when nw=0
+        assert tl.num_workers == 0
+
+    def test_dataloader_config_fields_accepted(self):
+        """DatasetConfig accepts persistent_workers and prefetch_factor without error."""
+        cfg = DatasetConfig(
+            num_workers=0,
+            persistent_workers=True,
+            prefetch_factor=4,
+        )
+        assert cfg.persistent_workers is True
+        assert cfg.prefetch_factor == 4

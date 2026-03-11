@@ -36,6 +36,7 @@ try:
         DatasetConfig,
         create_dataloaders,
         build_dataset_from_feature_dicts,
+        build_dataset_from_dataframe,
         CONTINUOUS_FEATURES,
         CATEGORICAL_FEATURES,
     )
@@ -99,6 +100,7 @@ try:
         # Data
         "HydraDataset", "DatasetConfig",
         "create_dataloaders", "build_dataset_from_feature_dicts",
+        "build_dataset_from_dataframe",
         "CONTINUOUS_FEATURES", "CATEGORICAL_FEATURES",
         # Training
         "HydraTrainer", "TrainerConfig",
