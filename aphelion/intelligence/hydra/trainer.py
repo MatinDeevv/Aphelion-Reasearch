@@ -170,14 +170,16 @@ if HAS_TORCH:
                     pass
 
             # OPTIMIZED: torch.compile() for 20-50% speedup on PyTorch 2.x
-            # NOTE: mode="max-autotune" avoids CUDAGraphs which crash with
-            # dynamic MoE routing (.item() calls) and multi-model ensembles.
+            # CUDAGraphs are explicitly disabled — they crash with multi-model
+            # ensembles (tensor outputs overwritten by subsequent runs).
             self._compiled = False
             if hasattr(torch, 'compile') and self._device.type == "cuda":
                 try:
+                    import torch._inductor.config as inductor_cfg
+                    inductor_cfg.triton.cudagraphs = False
                     self._model = torch.compile(self._model, mode="max-autotune")
                     self._compiled = True
-                    logger.info("torch.compile() enabled (max-autotune mode)")
+                    logger.info("torch.compile() enabled (max-autotune, CUDAGraphs OFF)")
                 except Exception as e:
                     logger.warning("torch.compile() failed: %s — falling back to eager", e)
 
