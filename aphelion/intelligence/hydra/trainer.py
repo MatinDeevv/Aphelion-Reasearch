@@ -645,11 +645,11 @@ if HAS_TORCH:
                 total_samples += y1h.shape[0]
 
                 if "confidence" in outputs:
-                    all_conf.extend(outputs["confidence"].squeeze(-1).cpu().numpy().tolist())
+                    all_conf.extend(outputs["confidence"].squeeze(-1).float().cpu().numpy().tolist())
 
                 direction = preds.float() - 1.0
                 strat_ret = direction * raw_ret[:, 2]
-                all_strat_ret.extend(strat_ret.cpu().numpy().tolist())
+                all_strat_ret.extend(strat_ret.float().cpu().numpy().tolist())
                 n_batches += 1
 
                 if HAS_TQDM and n_batches % 5 == 0 and n_batches > 0:
