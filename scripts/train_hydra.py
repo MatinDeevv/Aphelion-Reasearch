@@ -24,7 +24,7 @@ from loguru import logger
 from aphelion.intelligence.hydra.dataset import (
     CONTINUOUS_FEATURES,
     DatasetConfig,
-    build_dataset_from_feature_dicts,
+    build_dataset_from_dataframe,
     create_dataloaders,
 )
 from aphelion.intelligence.hydra.ensemble import EnsembleConfig
@@ -292,12 +292,16 @@ def run_training(
     full_model: bool = False,
     checkpoint_dir: str = "models/hydra",
     data_csv: str = "",
+    num_workers: int = 0,
+    prefetch_factor: int = 2,
 ) -> dict:
     """
     Run the full training pipeline.
 
     Args:
         data_csv: Path to a CSV with real OHLCV data. If empty, uses synthetic data.
+        num_workers: DataLoader worker processes (0 = single-process, safe default).
+        prefetch_factor: Batches to prefetch per worker when num_workers > 0.
 
     Returns:
         Training result metrics dict.
@@ -313,20 +317,21 @@ def run_training(
         df = generate_synthetic_data(n_bars)
         logger.info(f"Using SYNTHETIC data: {n_bars:,} bars")
 
-    feature_dicts = df.to_dict(orient="records")
     close_prices = df["close"].values
 
-    # 2. Build datasets
+    # 2. Build datasets — use DataFrame builder to skip the df→dicts→df roundtrip
     logger.info("Building HYDRA datasets...")
     ds_config = DatasetConfig(
         val_split=0.15,
         test_split=0.15,
         batch_size=batch_size,
-        num_workers=0,
+        num_workers=num_workers,
+        persistent_workers=(num_workers > 0),
+        prefetch_factor=prefetch_factor,
         lookback_bars=32 if not full_model else 64,
     )
-    train_ds, val_ds, test_ds, means, stds = build_dataset_from_feature_dicts(
-        feature_dicts, close_prices, config=ds_config,
+    train_ds, val_ds, test_ds, means, stds = build_dataset_from_dataframe(
+        df, close_prices, config=ds_config,
     )
     logger.info(f"Dataset: Train={len(train_ds)}, Val={len(val_ds)}, Test={len(test_ds)}")
 
@@ -381,6 +386,10 @@ def main():
     parser.add_argument("--epochs", type=int, default=None, help="Override epoch count")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
     parser.add_argument("--checkpoint-dir", type=str, default="models/hydra", help="Checkpoint dir")
+    parser.add_argument("--num-workers", type=int, default=0,
+                        help="DataLoader worker processes (default 0; use 4+ on A100 for GPU throughput)")
+    parser.add_argument("--prefetch-factor", type=int, default=2,
+                        help="Batches to prefetch per worker when --num-workers > 0 (default 2)")
     args = parser.parse_args()
 
     if args.full:
@@ -399,6 +408,8 @@ def main():
         full_model=full_model,
         checkpoint_dir=args.checkpoint_dir,
         data_csv=args.data,
+        num_workers=args.num_workers,
+        prefetch_factor=args.prefetch_factor,
     )
 
     if "error" not in results:
