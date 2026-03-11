@@ -24,6 +24,7 @@ from loguru import logger
 from aphelion.intelligence.hydra.dataset import (
     CONTINUOUS_FEATURES,
     DatasetConfig,
+    build_dataset_from_dataframe,
     build_dataset_from_feature_dicts,
     create_dataloaders,
 )
@@ -292,17 +293,39 @@ def run_training(
     full_model: bool = False,
     checkpoint_dir: str = "models/hydra",
     data_csv: str = "",
+    num_workers: int = -1,
+    prefetch_factor: int = 4,
+    persistent_workers: bool = True,
 ) -> dict:
     """
     Run the full training pipeline.
 
     Args:
         data_csv: Path to a CSV with real OHLCV data. If empty, uses synthetic data.
+        num_workers: DataLoader worker count.  -1 = auto (uses all available CPU
+            cores minus one when CUDA is present, 0 otherwise — safe for Colab
+            exec() and Windows).
+        prefetch_factor: Number of batches to prefetch per worker (ignored when
+            num_workers == 0).
+        persistent_workers: Keep worker processes alive between epochs (ignored
+            when num_workers == 0).
 
     Returns:
         Training result metrics dict.
     """
     t0 = time.time()
+
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Resolve num_workers: auto-detect when -1
+    if num_workers < 0:
+        if device == "cuda":
+            # Cap at 8 to avoid excessive memory consumption on high-core systems;
+            # 4-8 workers is already enough to saturate an A100 data pipeline.
+            num_workers = min(8, (os.cpu_count() or 1))
+        else:
+            num_workers = 0
 
     # 1. Load data — real CSV or synthetic
     if data_csv:
@@ -313,20 +336,21 @@ def run_training(
         df = generate_synthetic_data(n_bars)
         logger.info(f"Using SYNTHETIC data: {n_bars:,} bars")
 
-    feature_dicts = df.to_dict(orient="records")
     close_prices = df["close"].values
 
-    # 2. Build datasets
+    # 2. Build datasets — DataFrame path avoids df.to_dict(orient="records") overhead
     logger.info("Building HYDRA datasets...")
     ds_config = DatasetConfig(
         val_split=0.15,
         test_split=0.15,
         batch_size=batch_size,
-        num_workers=0,
+        num_workers=num_workers,
+        prefetch_factor=prefetch_factor,
+        persistent_workers=persistent_workers,
         lookback_bars=32 if not full_model else 64,
     )
-    train_ds, val_ds, test_ds, means, stds = build_dataset_from_feature_dicts(
-        feature_dicts, close_prices, config=ds_config,
+    train_ds, val_ds, test_ds, means, stds = build_dataset_from_dataframe(
+        df, close_prices, config=ds_config,
     )
     logger.info(f"Dataset: Train={len(train_ds)}, Val={len(val_ds)}, Test={len(test_ds)}")
 
@@ -338,9 +362,6 @@ def run_training(
 
     # 3. Configure model + trainer
     ens_config = build_full_ensemble_config() if full_model else build_small_ensemble_config()
-
-    import torch
-    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     trainer_config = TrainerConfig(
         max_epochs=max_epochs,
@@ -381,6 +402,18 @@ def main():
     parser.add_argument("--epochs", type=int, default=None, help="Override epoch count")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
     parser.add_argument("--checkpoint-dir", type=str, default="models/hydra", help="Checkpoint dir")
+    parser.add_argument(
+        "--num-workers", type=int, default=-1,
+        help="DataLoader worker count. -1 = auto (uses CPU cores on CUDA, 0 on CPU).",
+    )
+    parser.add_argument(
+        "--prefetch-factor", type=int, default=4,
+        help="Batches to prefetch per worker (ignored when num-workers==0).",
+    )
+    parser.add_argument(
+        "--no-persistent-workers", action="store_true",
+        help="Disable persistent DataLoader workers (ignored when num-workers==0).",
+    )
     args = parser.parse_args()
 
     if args.full:
@@ -399,6 +432,9 @@ def main():
         full_model=full_model,
         checkpoint_dir=args.checkpoint_dir,
         data_csv=args.data,
+        num_workers=args.num_workers,
+        prefetch_factor=args.prefetch_factor,
+        persistent_workers=not args.no_persistent_workers,
     )
 
     if "error" not in results:

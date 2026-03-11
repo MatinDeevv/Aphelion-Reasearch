@@ -98,7 +98,9 @@ class DatasetConfig:
     val_split: float = 0.15           # Validation fraction
     test_split: float = 0.15          # Test fraction
     batch_size: int = 256
-    num_workers: int = 0              # 0 for Windows compatibility
+    num_workers: int = 0              # 0 for Windows/Colab exec() compatibility
+    prefetch_factor: int = 4          # DataLoader prefetch depth (ignored when num_workers==0)
+    persistent_workers: bool = True   # Keep worker processes alive (ignored when num_workers==0)
 
 
 def _extract_features_from_bar_dict(
@@ -266,6 +268,131 @@ def build_dataset_from_feature_dicts(
     return train_ds, val_ds, test_ds, feature_means, feature_stds
 
 
+def build_dataset_from_dataframe(
+    df: "pd.DataFrame",  # type: ignore[name-defined]
+    close_prices: np.ndarray,
+    config: Optional[DatasetConfig] = None,
+) -> tuple:
+    """
+    DataFrame-native dataset builder — avoids the df.to_dict(orient="records")
+    overhead by working directly with the DataFrame's columnar data.
+
+    On large datasets (100K+ bars) this saves significant CPU time and memory
+    compared to building a list[dict] and then re-converting to a DataFrame
+    inside build_dataset_from_feature_dicts.
+
+    Args:
+        df: DataFrame with one row per bar.  Must contain columns matching
+            CONTINUOUS_FEATURES and CATEGORICAL_FEATURES (missing columns
+            are treated as zero).
+        close_prices: Array of close prices aligned with the DataFrame rows.
+        config: Dataset configuration.
+
+    Returns:
+        (train_dataset, val_dataset, test_dataset, feature_means, feature_stds)
+    """
+    if not HAS_TORCH:
+        raise ImportError("PyTorch required. Install with: pip install -e '.[ml]'")
+
+    import pandas as pd
+
+    config = config or DatasetConfig()
+    n_bars = len(df)
+    n_cont = len(CONTINUOUS_FEATURES)
+    n_cat = len(CATEGORICAL_FEATURES)
+    max_horizon = max(config.horizon_5m, config.horizon_15m, config.horizon_1h)
+
+    # Extract continuous features directly from DataFrame columns — zero copy
+    cont_matrix = np.zeros((n_bars, n_cont), dtype=np.float32)
+    for i, key in enumerate(CONTINUOUS_FEATURES):
+        if key in df.columns:
+            col = pd.to_numeric(df[key], errors='coerce').values.astype(np.float32)
+            bad_mask = ~np.isfinite(col)
+            if bad_mask.any():
+                col[bad_mask] = 0.0
+            cont_matrix[:, i] = col
+
+    # Extract categorical features directly from DataFrame columns
+    cat_matrix = np.zeros((n_bars, n_cat), dtype=np.int64)
+    if 'session' in df.columns:
+        cat_matrix[:, 0] = df['session'].map(
+            lambda x: SESSION_MAP.get(x, 4) if isinstance(x, str) else 4
+        ).values
+    if 'day_of_week' in df.columns:
+        cat_matrix[:, 1] = df['day_of_week'].map(
+            lambda x: DAY_MAP.get(x, 0) if isinstance(x, str) else 0
+        ).values
+
+    # Normalize continuous features (z-score, training portion only)
+    n_usable = n_bars - max_horizon
+    train_end = int(n_usable * (1 - config.val_split - config.test_split))
+
+    feature_means = np.mean(cont_matrix[:train_end], axis=0)
+    feature_stds = np.std(cont_matrix[:train_end], axis=0)
+    feature_stds[feature_stds < 1e-8] = 1.0
+
+    cont_matrix = (cont_matrix - feature_means) / feature_stds
+
+    nan_mask = ~np.isfinite(cont_matrix)
+    if nan_mask.any():
+        n_bad = nan_mask.sum()
+        print(f"  ⚠ Cleaning {n_bad} NaN/Inf values in normalized features")
+        cont_matrix = np.nan_to_num(cont_matrix, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # Build direction labels and raw returns
+    returns_5m = np.zeros(n_bars, dtype=np.float32)
+    returns_15m = np.zeros(n_bars, dtype=np.float32)
+    returns_1h = np.zeros(n_bars, dtype=np.float32)
+
+    for i in range(n_bars - max_horizon):
+        p = close_prices[i]
+        if p > 0:
+            returns_5m[i] = (close_prices[min(i + config.horizon_5m, n_bars - 1)] - p) / p * 100
+            returns_15m[i] = (close_prices[min(i + config.horizon_15m, n_bars - 1)] - p) / p * 100
+            returns_1h[i] = (close_prices[min(i + config.horizon_1h, n_bars - 1)] - p) / p * 100
+
+    threshold = config.direction_threshold_pct
+
+    def classify(ret: np.ndarray) -> np.ndarray:
+        labels = np.ones(len(ret), dtype=np.int64)
+        labels[ret > threshold] = 2
+        labels[ret < -threshold] = 0
+        return labels
+
+    labels_5m = classify(returns_5m)
+    labels_15m = classify(returns_15m)
+    labels_1h = classify(returns_1h)
+
+    raw_returns = np.stack([returns_5m, returns_15m, returns_1h], axis=1)
+
+    # Create sliding window split
+    valid_start = config.lookback_bars
+    valid_end = n_bars - max_horizon
+
+    indices = list(range(valid_start, valid_end))
+    train_split_idx = int(len(indices) * (1 - config.val_split - config.test_split))
+    val_split_idx = int(len(indices) * (1 - config.test_split))
+
+    train_indices = indices[:train_split_idx]
+    val_indices = indices[train_split_idx:val_split_idx]
+    test_indices = indices[val_split_idx:]
+
+    train_ds = HydraDataset(
+        cont_matrix, cat_matrix, labels_5m, labels_15m, labels_1h,
+        raw_returns, train_indices, config.lookback_bars,
+    )
+    val_ds = HydraDataset(
+        cont_matrix, cat_matrix, labels_5m, labels_15m, labels_1h,
+        raw_returns, val_indices, config.lookback_bars,
+    )
+    test_ds = HydraDataset(
+        cont_matrix, cat_matrix, labels_5m, labels_15m, labels_1h,
+        raw_returns, test_indices, config.lookback_bars,
+    )
+
+    return train_ds, val_ds, test_ds, feature_means, feature_stds
+
+
 class HydraDataset:
     """
     OPTIMIZED PyTorch-compatible dataset for TFT training.
@@ -319,21 +446,37 @@ def create_dataloaders(
     train_ds, val_ds, test_ds,
     config: Optional[DatasetConfig] = None,
 ) -> tuple:
-    """Create train/val/test DataLoaders."""
+    """Create train/val/test DataLoaders.
+
+    When ``config.num_workers > 0`` the loaders use ``persistent_workers``
+    and ``prefetch_factor`` for maximum GPU throughput (A100 / Colab).
+    When ``num_workers == 0`` those flags are omitted so the loaders work
+    safely inside Colab ``exec()`` contexts or on Windows.
+    """
     if not HAS_TORCH:
         raise ImportError("PyTorch required")
 
     config = config or DatasetConfig()
+
+    # Extra kwargs that require num_workers > 0
+    extra: dict = {}
+    if config.num_workers > 0:
+        extra["persistent_workers"] = config.persistent_workers
+        extra["prefetch_factor"] = config.prefetch_factor
+
     train_loader = DataLoader(
         train_ds, batch_size=config.batch_size, shuffle=True,
         num_workers=config.num_workers, pin_memory=True, drop_last=True,
+        **extra,
     )
     val_loader = DataLoader(
         val_ds, batch_size=config.batch_size, shuffle=False,
         num_workers=config.num_workers, pin_memory=True,
+        **extra,
     )
     test_loader = DataLoader(
         test_ds, batch_size=config.batch_size, shuffle=False,
         num_workers=config.num_workers, pin_memory=True,
+        **extra,
     )
     return train_loader, val_loader, test_loader
