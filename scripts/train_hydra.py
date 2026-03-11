@@ -24,6 +24,7 @@ from loguru import logger
 from aphelion.intelligence.hydra.dataset import (
     CONTINUOUS_FEATURES,
     DatasetConfig,
+    build_dataset_from_dataframe,
     build_dataset_from_feature_dicts,
     create_dataloaders,
 )
@@ -292,12 +293,15 @@ def run_training(
     full_model: bool = False,
     checkpoint_dir: str = "models/hydra",
     data_csv: str = "",
+    num_workers: int = -1,
 ) -> dict:
     """
     Run the full training pipeline.
 
     Args:
         data_csv: Path to a CSV with real OHLCV data. If empty, uses synthetic data.
+        num_workers: DataLoader worker count.  Pass ``-1`` (default) to auto-select:
+            4 workers on CUDA, 0 on CPU (safe for Windows / notebook exec() mode).
 
     Returns:
         Training result metrics dict.
@@ -313,20 +317,32 @@ def run_training(
         df = generate_synthetic_data(n_bars)
         logger.info(f"Using SYNTHETIC data: {n_bars:,} bars")
 
-    feature_dicts = df.to_dict(orient="records")
     close_prices = df["close"].values
 
-    # 2. Build datasets
+    # 2. Build datasets using the DataFrame path (no to_dict roundtrip)
     logger.info("Building HYDRA datasets...")
+
+    # 3. Configure model + trainer
+    ens_config = build_full_ensemble_config() if full_model else build_small_ensemble_config()
+
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Resolve num_workers: auto-select based on device when -1
+    if num_workers < 0:
+        num_workers = 4 if device == "cuda" else 0
+
     ds_config = DatasetConfig(
         val_split=0.15,
         test_split=0.15,
         batch_size=batch_size,
-        num_workers=0,
+        num_workers=num_workers,
+        persistent_workers=(num_workers > 0),
+        prefetch_factor=4 if num_workers > 0 else 2,
         lookback_bars=32 if not full_model else 64,
     )
-    train_ds, val_ds, test_ds, means, stds = build_dataset_from_feature_dicts(
-        feature_dicts, close_prices, config=ds_config,
+    train_ds, val_ds, test_ds, means, stds = build_dataset_from_dataframe(
+        df, close_prices, config=ds_config,
     )
     logger.info(f"Dataset: Train={len(train_ds)}, Val={len(val_ds)}, Test={len(test_ds)}")
 
@@ -335,12 +351,6 @@ def run_training(
         return {"error": "Dataset too small"}
 
     train_dl, val_dl, test_dl = create_dataloaders(train_ds, val_ds, test_ds, config=ds_config)
-
-    # 3. Configure model + trainer
-    ens_config = build_full_ensemble_config() if full_model else build_small_ensemble_config()
-
-    import torch
-    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     trainer_config = TrainerConfig(
         max_epochs=max_epochs,
@@ -381,6 +391,10 @@ def main():
     parser.add_argument("--epochs", type=int, default=None, help="Override epoch count")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
     parser.add_argument("--checkpoint-dir", type=str, default="models/hydra", help="Checkpoint dir")
+    parser.add_argument(
+        "--num-workers", type=int, default=-1,
+        help="DataLoader worker processes (-1 = auto: 4 on CUDA, 0 on CPU)",
+    )
     args = parser.parse_args()
 
     if args.full:
@@ -399,6 +413,7 @@ def main():
         full_model=full_model,
         checkpoint_dir=args.checkpoint_dir,
         data_csv=args.data,
+        num_workers=args.num_workers,
     )
 
     if "error" not in results:
