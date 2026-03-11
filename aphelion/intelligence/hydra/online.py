@@ -308,7 +308,7 @@ class OnlineLearner:
 
         with torch.no_grad():
             x = self._build_input(ensemble_logits, uncertainty, features_summary)
-            adjustment = self._adapter(x).squeeze(0).numpy()
+            adjustment = self._adapter(x).squeeze(0).float().numpy()
 
         return ensemble_logits + adjustment
 

@@ -282,13 +282,13 @@ class HydraInference:
         signals = []
         batch_size = outputs["probs_1h"].shape[0]
 
-        probs_1h = outputs["probs_1h"].detach().cpu().numpy()
-        probs_15m = outputs["probs_15m"].detach().cpu().numpy()
-        probs_5m = outputs["probs_5m"].detach().cpu().numpy()
-        uncertainty = outputs["uncertainty"].detach().cpu().numpy().flatten()
+        probs_1h = outputs["probs_1h"].detach().cpu().float().numpy()
+        probs_15m = outputs["probs_15m"].detach().cpu().float().numpy()
+        probs_5m = outputs["probs_5m"].detach().cpu().float().numpy()
+        uncertainty = outputs["uncertainty"].detach().cpu().float().numpy().flatten()
 
-        gate_weights = outputs.get("gate_attention_weights", torch.zeros(batch_size, 1, 6)).detach().cpu().numpy()
-        moe_weights = outputs.get("moe_routing_weights", torch.zeros(batch_size, 4)).detach().cpu().numpy()
+        gate_weights = outputs.get("gate_attention_weights", torch.zeros(batch_size, 1, 6)).detach().cpu().float().numpy()
+        moe_weights = outputs.get("moe_routing_weights", torch.zeros(batch_size, 4)).detach().cpu().float().numpy()
 
         for i in range(batch_size):
             p1 = probs_1h[i]
