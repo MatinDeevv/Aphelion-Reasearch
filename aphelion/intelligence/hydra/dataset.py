@@ -6,6 +6,7 @@ Sliding window over 60+ features → multi-horizon directional targets.
 
 from __future__ import annotations
 
+import datetime
 from dataclasses import dataclass
 from typing import Optional
 
@@ -134,6 +135,11 @@ def _extract_features_from_bar_dict(
     return cont, cat
 
 
+def _ts() -> str:
+    """Return a compact HH:MM:SS timestamp for progress prints."""
+    return datetime.datetime.now().strftime("%H:%M:%S")
+
+
 def build_dataset_from_feature_dicts(
     feature_dicts: list[dict],
     close_prices: np.ndarray,
@@ -160,14 +166,19 @@ def build_dataset_from_feature_dicts(
     n_cat = len(CATEGORICAL_FEATURES)
     max_horizon = max(config.horizon_5m, config.horizon_15m, config.horizon_1h)
 
+    print(f"  [{_ts()}] Building dataset from {n_bars:,} bars "
+          f"({n_cont} continuous + {n_cat} categorical features)...")
+
     # OPTIMIZED: Vectorized feature extraction using pandas DataFrame
     # Avoids 100K+ Python dict lookups per feature
     import pandas as pd
     if isinstance(feature_dicts, list) and len(feature_dicts) > 0:
-        # Convert list of dicts to DataFrame in one shot
+        print(f"  [{_ts()}] Converting {n_bars:,} feature dicts → DataFrame...")
         df_features = pd.DataFrame(feature_dicts)
+        print(f"  [{_ts()}] DataFrame ready ({df_features.shape[0]:,} rows × {df_features.shape[1]} cols)")
 
         # Extract continuous features — vectorized
+        print(f"  [{_ts()}] Extracting continuous features ({n_cont} cols)...")
         cont_matrix = np.zeros((n_bars, n_cont), dtype=np.float32)
         for i, key in enumerate(CONTINUOUS_FEATURES):
             if key in df_features.columns:
@@ -179,6 +190,7 @@ def build_dataset_from_feature_dicts(
                 cont_matrix[:, i] = col
 
         # Extract categorical features — vectorized
+        print(f"  [{_ts()}] Extracting categorical features ({n_cat} cols)...")
         cat_matrix = np.zeros((n_bars, n_cat), dtype=np.int64)
         if 'session' in df_features.columns:
             cat_matrix[:, 0] = df_features['session'].map(
@@ -197,6 +209,7 @@ def build_dataset_from_feature_dicts(
     n_usable = n_bars - max_horizon
     train_end = int(n_usable * (1 - config.val_split - config.test_split))
 
+    print(f"  [{_ts()}] Normalizing features (z-score, train window = {train_end:,} bars)...")
     feature_means = np.mean(cont_matrix[:train_end], axis=0)
     feature_stds = np.std(cont_matrix[:train_end], axis=0)
     feature_stds[feature_stds < 1e-8] = 1.0  # Avoid division by zero
@@ -207,22 +220,42 @@ def build_dataset_from_feature_dicts(
     nan_mask = ~np.isfinite(cont_matrix)
     if nan_mask.any():
         n_bad = nan_mask.sum()
-        print(f"  ⚠ Cleaning {n_bad} NaN/Inf values in normalized features")
+        print(f"  [{_ts()}] ⚠ Cleaning {n_bad} NaN/Inf values in normalized features")
         cont_matrix = np.nan_to_num(cont_matrix, nan=0.0, posinf=0.0, neginf=0.0)
 
-    # Build direction labels for each horizon
-    # Label: 0=SHORT, 1=FLAT, 2=LONG
+    # Build direction labels for each horizon using vectorized numpy ops.
+    # Replaces the former pure-Python loop which was O(n_bars) and froze on
+    # large datasets (100K+ bars could take several minutes).
+    print(f"  [{_ts()}] Computing returns for {n_usable:,} bars "
+          f"(horizons: 5m/{config.horizon_5m}, 15m/{config.horizon_15m}, "
+          f"1h/{config.horizon_1h})...")
+
+    idx = np.arange(n_usable)
+    prices = close_prices[:n_usable]
+    if prices.dtype != np.float64:
+        prices = prices.astype(np.float64)
+    safe_mask = prices > 0
+    safe_prices = np.where(safe_mask, prices, 1.0)
+
+    idx_5m = np.minimum(idx + config.horizon_5m, n_bars - 1)
+    idx_15m = np.minimum(idx + config.horizon_15m, n_bars - 1)
+    idx_1h = np.minimum(idx + config.horizon_1h, n_bars - 1)
+
     returns_5m = np.zeros(n_bars, dtype=np.float32)
     returns_15m = np.zeros(n_bars, dtype=np.float32)
     returns_1h = np.zeros(n_bars, dtype=np.float32)
 
-    for i in range(n_bars - max_horizon):
-        p = close_prices[i]
-        if p > 0:
-            returns_5m[i] = (close_prices[min(i + config.horizon_5m, n_bars - 1)] - p) / p * 100
-            returns_15m[i] = (close_prices[min(i + config.horizon_15m, n_bars - 1)] - p) / p * 100
-            returns_1h[i] = (close_prices[min(i + config.horizon_1h, n_bars - 1)] - p) / p * 100
+    returns_5m[:n_usable] = np.where(
+        safe_mask, (close_prices[idx_5m] - prices) / safe_prices * 100, 0.0
+    ).astype(np.float32)
+    returns_15m[:n_usable] = np.where(
+        safe_mask, (close_prices[idx_15m] - prices) / safe_prices * 100, 0.0
+    ).astype(np.float32)
+    returns_1h[:n_usable] = np.where(
+        safe_mask, (close_prices[idx_1h] - prices) / safe_prices * 100, 0.0
+    ).astype(np.float32)
 
+    print(f"  [{_ts()}] Classifying direction labels (threshold ±{config.direction_threshold_pct}%)...")
     threshold = config.direction_threshold_pct
 
     def classify(ret: np.ndarray) -> np.ndarray:
@@ -250,6 +283,10 @@ def build_dataset_from_feature_dicts(
     val_indices = indices[train_split_idx:val_split_idx]
     test_indices = indices[val_split_idx:]
 
+    print(f"  [{_ts()}] Assembling PyTorch datasets "
+          f"(train={len(train_indices):,}, val={len(val_indices):,}, "
+          f"test={len(test_indices):,})...")
+
     train_ds = HydraDataset(
         cont_matrix, cat_matrix, labels_5m, labels_15m, labels_1h,
         raw_returns, train_indices, config.lookback_bars,
@@ -263,6 +300,7 @@ def build_dataset_from_feature_dicts(
         raw_returns, test_indices, config.lookback_bars,
     )
 
+    print(f"  [{_ts()}] Dataset ready ✓")
     return train_ds, val_ds, test_ds, feature_means, feature_stds
 
 

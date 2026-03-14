@@ -258,7 +258,9 @@ def run_one_round(data_file, max_epochs, tag, description):
     # Load data
     df = load_real_data(data_file)
     n_bars = len(df)
+    print(f"  [{time.strftime('%H:%M:%S')}] Converting {n_bars:,} bars to feature dicts...", end=" ", flush=True)
     feature_dicts = df.to_dict(orient="records")
+    print("done")
     close_prices = df["close"].values
 
     # Build datasets — num_workers=0 is REQUIRED for Colab exec() context
@@ -270,6 +272,7 @@ def run_one_round(data_file, max_epochs, tag, description):
         num_workers=0,
         lookback_bars=64,
     )
+    print(f"  [{time.strftime('%H:%M:%S')}] Building dataset (this may take a moment for large files)...")
     train_ds, val_ds, test_ds, means, stds = build_dataset_from_feature_dicts(
         feature_dicts, close_prices, config=ds_config,
     )
