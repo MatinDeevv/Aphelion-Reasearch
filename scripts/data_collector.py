@@ -142,6 +142,11 @@ def resolve_symbol(desired: str, alternatives: list[str]) -> Optional[str]:
     return None
 
 
+def _fetch_ts() -> str:
+    """Return a compact HH:MM:SS timestamp for progress prints."""
+    return time.strftime("%H:%M:%S")
+
+
 def fetch_bars(symbol: str, tf_name: str, tf_mt5: int, count: int) -> Optional[pd.DataFrame]:
     """
     Fetch bars from MT5 and return as DataFrame.
@@ -167,34 +172,49 @@ def fetch_bars(symbol: str, tf_name: str, tf_mt5: int, count: int) -> Optional[p
             all_frames.append(pd.DataFrame(rates))
     else:
         # Chunk: fetch from newest to oldest using copy_rates_from_pos offset
+        n_chunks_total = (count + CHUNK_SIZE - 1) // CHUNK_SIZE
         pos = 0
         remaining = count
+        chunk_num = 0
         while remaining > 0:
             chunk = min(CHUNK_SIZE, remaining)
+            chunk_num += 1
+            print(f"      [{_fetch_ts()}] Fetching chunk {chunk_num}/{n_chunks_total} "
+                  f"({chunk:,} bars, offset {pos:,})...", end=" ", flush=True)
             rates = mt5.copy_rates_from_pos(symbol, tf_mt5, pos, chunk)
             if rates is None or len(rates) == 0:
+                print("no data, trying smaller...")
                 # Try smaller chunk
                 for fallback in [20_000, 10_000, 5_000]:
                     if fallback >= chunk:
                         continue
                     rates = mt5.copy_rates_from_pos(symbol, tf_mt5, pos, fallback)
                     if rates is not None and len(rates) > 0:
+                        print(f"got {len(rates):,} bars at fallback size {fallback:,}")
                         break
                 if rates is None or len(rates) == 0:
+                    print("no data at this offset — stopping early")
                     break  # No more data available at this offset
             got = len(rates)
+            print(f"got {got:,} bars")
             all_frames.append(pd.DataFrame(rates))
             pos += got
             remaining -= got
             if got < chunk:
+                print(f"      [{_fetch_ts()}] Reached end of available history at offset {pos:,}")
                 break  # Reached end of available history
 
     if not all_frames:
         return None
 
+    n_chunks = len(all_frames)
+    total_raw = sum(len(f) for f in all_frames)
+    print(f"      [{_fetch_ts()}] Concatenating {n_chunks} chunk(s) "
+          f"({total_raw:,} raw rows)...", end=" ", flush=True)
     # Combine all chunks (they come newest-first per chunk, so sort by time)
     raw = pd.concat(all_frames, ignore_index=True)
     raw = raw.drop_duplicates(subset=["time"]).sort_values("time").reset_index(drop=True)
+    print(f"done — {len(raw):,} unique bars after dedup")
 
     if len(raw) == 0:
         return None
