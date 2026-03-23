@@ -37,7 +37,7 @@ class TradingConfig:
     symbol: str = "XAUUSD"
     capital: float = 10_000.0
     warmup_bars: int = 200
-    mode: str = "paper"  # paper | simulated | backtest
+    mode: str = "paper"  # paper | backtest
 
 
 @dataclass
@@ -69,7 +69,7 @@ class HydraConfig:
 class TrainingPreset:
     """Training configuration preset."""
     name: str = "custom"
-    data_source: str = "synthetic"   # synthetic | real
+    data_source: str = "real"   # real
     data_path: str = ""
     epochs: int = 20
     batch_size: int = 512
@@ -223,12 +223,10 @@ def config_to_runner_config(config: AphelionConfig, mode: str = "paper"):
     try:
         from aphelion.paper.runner import PaperRunnerConfig, FeedMode
 
-        if mode == "simulated":
-            feed_mode = FeedMode.SIMULATED
-        elif mode == "backtest":
-            feed_mode = FeedMode.SIMULATED  # backtest uses simulated feed
+        if mode == "backtest":
+            feed_mode = FeedMode.REPLAY
         else:
-            feed_mode = FeedMode.SIMULATED  # default to simulated
+            feed_mode = FeedMode.LIVE
 
         runner_config = PaperRunnerConfig(
             feed_mode=feed_mode,

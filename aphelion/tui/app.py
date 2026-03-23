@@ -186,11 +186,8 @@ if HAS_TEXTUAL:
             self._forge_ctrl = None
             self._backtest_ctrl = None
 
-            # Live simulator for simulated mode (used when no controller)
-            self._simulator = None
-
             # Navigation state
-            self._selected_launcher_card = 0  # 0=paper, 1=simulated, 2=backtest
+            self._selected_launcher_card = 0  # 0=paper, 1=backtest
             self._scroll_offset = 0           # For scrollable content
             self._selected_position_idx = 0   # For positions table
 
@@ -297,8 +294,6 @@ if HAS_TEXTUAL:
                 card = self._selected_launcher_card
                 if card == 0:
                     self._start_paper_session(mode="paper")
-                elif card == 1:
-                    self._start_paper_session(mode="simulated")
                 else:
                     self.action_switch_view("backtest")
             elif view == "setup":
@@ -355,10 +350,7 @@ if HAS_TEXTUAL:
 
         def action_context_s(self) -> None:
             view = self._current_view
-            if view == "launcher":
-                # [S] → start simulated session
-                self._start_paper_session(mode="simulated")
-            elif view == "setup":
+            if view == "setup":
                 # [S] → save config
                 form = self._get_setup_form()
                 cfg = self._get_config()
@@ -515,7 +507,7 @@ if HAS_TEXTUAL:
         def action_context_2(self) -> None:
             if self._current_view == "training":
                 self._state._selected_training_preset = 1
-                self._notify_user("Preset 2: Full synthetic")
+                self._notify_user("Preset 2: Full training")
                 self._tick()
 
         def action_context_3(self) -> None:
@@ -527,67 +519,44 @@ if HAS_TEXTUAL:
         # ── Session launch helper ────────────────────────────────────
 
         def _start_paper_session(self, mode: str = "paper") -> None:
-            """Start a trading session and switch to the overview dashboard."""
+            """Start a paper trading session and switch to the overview dashboard."""
             if self._controller is not None:
                 # Route through unified controller
                 self._controller.start_session(mode)
                 self._notify_user(f"Session started ({mode})")
             else:
-                # Legacy path — direct simulator / controller creation
+                # Legacy path — direct controller creation
                 cfg = self._get_config()
                 cfg.trading.mode = mode
 
-                # Stop any existing simulator
-                if self._simulator and self._simulator.is_running:
-                    self._simulator.stop()
-                    self._simulator = None
-
-                if mode == "simulated":
-                    from aphelion.tui.simulator import LiveSimulator
-                    capital = cfg.trading.capital if hasattr(cfg.trading, "capital") else 10_000.0
-                    symbol = cfg.trading.symbol if hasattr(cfg.trading, "symbol") else "XAUUSD"
-                    self._simulator = LiveSimulator(self._state, cfg)
-                    self._simulator.start(capital=capital, symbol=symbol)
-                    self._state.session_name = f"Sim-{symbol}"
-                    self._notify_user(f"Simulated session started — {symbol} — ${capital:,.0f}")
-                else:
-                    self._state.push_log("INFO", f"Starting {mode} session — {cfg.trading.symbol}")
-                    self._state.session_name = f"Paper-{cfg.trading.symbol}"
-                    try:
-                        from aphelion.tui.controller import SessionController
-                        if self._session_ctrl is None:
-                            self._session_ctrl = SessionController()
-                        from aphelion.tui.config import config_to_runner_config
-                        runner_config = config_to_runner_config(cfg, mode)
-                        try:
-                            self.run_worker(
-                                self._session_ctrl.start_session(runner_config, self._state),
-                                name="paper-session",
-                                exclusive=True,
-                            )
-                        except Exception:
-                            from aphelion.tui.simulator import LiveSimulator
-                            self._simulator = LiveSimulator(self._state, cfg)
-                            self._simulator.start()
-                    except Exception as exc:
-                        logger.warning("Could not start PaperRunner, using simulator: %s", exc)
-                        from aphelion.tui.simulator import LiveSimulator
-                        self._simulator = LiveSimulator(self._state, cfg)
-                        self._simulator.start()
-                    self._notify_user(f"Starting {mode} session...")
+                self._state.push_log("INFO", f"Starting {mode} session — {cfg.trading.symbol}")
+                self._state.session_name = f"Paper-{cfg.trading.symbol}"
+                try:
+                    from aphelion.tui.controller import SessionController
+                    if self._session_ctrl is None:
+                        self._session_ctrl = SessionController()
+                    from aphelion.tui.config import config_to_runner_config
+                    runner_config = config_to_runner_config(cfg, mode)
+                    self.run_worker(
+                        self._session_ctrl.start_session(runner_config, self._state),
+                        name="paper-session",
+                        exclusive=True,
+                    )
+                except Exception as exc:
+                    logger.error("Could not start PaperRunner: %s", exc)
+                    self._state.push_log("ERROR", f"Failed to start session: {exc}")
+                    self._notify_user(f"Session failed: {exc}", severity="error")
+                    return
+                self._notify_user(f"Starting {mode} session...")
 
             self.action_switch_view("overview")
 
         def _stop_session(self) -> None:
-            """Stop the current running session/simulator."""
+            """Stop the current running session."""
             if self._controller is not None:
                 self._controller.stop_session()
                 self._notify_user("Session stopped")
                 return
-            if self._simulator and self._simulator.is_running:
-                self._simulator.stop()
-                self._simulator = None
-                self._notify_user("Session stopped")
             if self._session_ctrl:
                 try:
                     import asyncio

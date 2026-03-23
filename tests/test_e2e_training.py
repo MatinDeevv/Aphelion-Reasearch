@@ -1,9 +1,9 @@
 """
-End-to-End Training Test — Simulates the EXACT Colab Flow
+End-to-End Training Test — Exercises the EXACT Colab Flow
 ==========================================================
 This test exercises the complete training pipeline that runs on Colab A100.
 It verifies:
-  1. Data loading + feature engineering (load_real_data OR synthetic)
+  1. Data loading + feature engineering (real market data only)
   2. Dataset building + dataloader creation
   3. Model instantiation with FULL ensemble config or small config
   4. Complete train() loop (2 epochs) with all loss terms
@@ -49,9 +49,22 @@ from aphelion.intelligence.hydra.transformer import TransformerConfig
 from scripts.train_hydra import (
     build_full_ensemble_config,
     build_small_ensemble_config,
-    generate_synthetic_data,
     load_real_data,
+    run_training,
 )
+
+
+def _resolve_real_data_csv() -> str | None:
+    candidates = (
+        "data/raw/xauusd_m5.csv",
+        "data/bars/xauusd_m5.csv",
+        "data/raw/xauusd_m1.csv",
+        "data/bars/xauusd_m1.csv",
+    )
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
 
 
 # ─── Fixtures ─────────────────────────────────────────────────────────
@@ -67,9 +80,14 @@ def full_config() -> EnsembleConfig:
 
 
 @pytest.fixture
-def synthetic_df():
-    """500 bars of synthetic data — enough for train/val/test splits."""
-    return generate_synthetic_data(500)
+def real_df():
+    """Load real market data — skip if not available."""
+    csv_path = _resolve_real_data_csv()
+    if csv_path is None:
+        pytest.skip("Real data not available in data/raw or data/bars")
+    df = load_real_data(csv_path)
+    # Use first 500 bars for speed
+    return df.head(500).reset_index(drop=True)
 
 
 @pytest.fixture
@@ -106,22 +124,22 @@ def _build_dataloaders(df, batch_size=16, lookback=16):
 class TestDataPipeline:
     """Test data loading and feature engineering."""
 
-    def test_synthetic_data_shape(self, synthetic_df):
-        df = synthetic_df
-        assert len(df) == 500
+    def test_real_data_shape(self, real_df):
+        df = real_df
+        assert len(df) > 0
         for col in ["open", "high", "low", "close", "volume"]:
             assert col in df.columns, f"Missing column: {col}"
 
-    def test_synthetic_data_no_nans(self, synthetic_df):
-        df = synthetic_df
+    def test_real_data_no_nans(self, real_df):
+        df = real_df
         for feat in CONTINUOUS_FEATURES:
             if feat in df.columns:
                 assert not np.any(np.isnan(df[feat].values)), f"NaN in {feat}"
                 assert not np.any(np.isinf(df[feat].values)), f"Inf in {feat}"
 
     def test_real_data_if_available(self):
-        csv_path = "data/bars/xauusd_m5.csv"
-        if not os.path.exists(csv_path):
+        csv_path = _resolve_real_data_csv()
+        if csv_path is None:
             pytest.skip("Real data not available locally")
         df = load_real_data(csv_path)
         assert len(df) > 100
@@ -130,8 +148,8 @@ class TestDataPipeline:
             assert not np.any(np.isnan(col)), f"NaN in {feat}"
             assert not np.any(np.isinf(col)), f"Inf in {feat}"
 
-    def test_dataset_build(self, synthetic_df):
-        train_dl, val_dl, _ = _build_dataloaders(synthetic_df)
+    def test_dataset_build(self, real_df):
+        train_dl, val_dl, _ = _build_dataloaders(real_df)
         batch = next(iter(train_dl))
         assert len(batch) == 6, f"Expected 6 tensors per batch, got {len(batch)}"
         cont, cat, y5m, y15m, y1h, raw_ret = batch
@@ -154,10 +172,10 @@ class TestModelInstantiation:
         assert n > 100_000_000, f"Full model should have >100M params, got {n:,}"
         print(f"Full model: {n:,} params")
 
-    def test_forward_pass(self, small_config, synthetic_df):
+    def test_forward_pass(self, small_config, real_df):
         model = HydraGate(small_config)
         model.eval()
-        train_dl, _, _ = _build_dataloaders(synthetic_df, batch_size=4, lookback=16)
+        train_dl, _, _ = _build_dataloaders(real_df, batch_size=4, lookback=16)
         batch = next(iter(train_dl))
         cont, cat = batch[0], batch[1]
 
@@ -178,9 +196,9 @@ class TestModelInstantiation:
 class TestFullTrainingLoop:
     """The main event — complete training like Colab does."""
 
-    def test_small_model_2_epochs(self, synthetic_df, temp_checkpoint_dir):
+    def test_small_model_2_epochs(self, real_df, temp_checkpoint_dir):
         """Exact Colab flow with small model, 2 epochs."""
-        train_dl, val_dl, _ = _build_dataloaders(synthetic_df, batch_size=16, lookback=16)
+        train_dl, val_dl, _ = _build_dataloaders(real_df, batch_size=16, lookback=16)
 
         config = TrainerConfig(
             max_epochs=2,
@@ -214,9 +232,9 @@ class TestFullTrainingLoop:
         assert np.isfinite(results["final_train_loss"]), "Train loss is not finite"
         print(f"Results: {results}")
 
-    def test_checkpoint_save_and_load(self, synthetic_df, temp_checkpoint_dir):
+    def test_checkpoint_save_and_load(self, real_df, temp_checkpoint_dir):
         """Checkpoint round-trip."""
-        train_dl, val_dl, _ = _build_dataloaders(synthetic_df, batch_size=16, lookback=16)
+        train_dl, val_dl, _ = _build_dataloaders(real_df, batch_size=16, lookback=16)
 
         config = TrainerConfig(
             max_epochs=2,
@@ -251,9 +269,9 @@ class TestFullTrainingLoop:
 
         print(f"Checkpoint round-trip OK — {len(ckpt_files)} files saved")
 
-    def test_training_with_mixup(self, synthetic_df, temp_checkpoint_dir):
+    def test_training_with_mixup(self, real_df, temp_checkpoint_dir):
         """Training with mixup enabled (warmup_epochs=0 so mixup applies immediately)."""
-        train_dl, val_dl, _ = _build_dataloaders(synthetic_df, batch_size=16, lookback=16)
+        train_dl, val_dl, _ = _build_dataloaders(real_df, batch_size=16, lookback=16)
 
         config = TrainerConfig(
             max_epochs=2,
@@ -309,6 +327,50 @@ class TestFullTrainingLoop:
         assert np.isfinite(results["final_val_loss"])
         print(f"Real-data training OK: {results}")
 
+    def test_training_from_prepared_npz_splits(self, temp_checkpoint_dir):
+        """Forged parquet handoff works when sibling train/val/test npz splits exist."""
+        rng = np.random.default_rng(42)
+        prepared_dir = Path(temp_checkpoint_dir) / "prepared"
+        prepared_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint_dir = Path(temp_checkpoint_dir) / "ckpts"
+
+        def _write_split(path: Path, n_rows: int = 128, n_cont: int = 12):
+            close = 2000.0 + np.cumsum(rng.normal(0, 0.5, n_rows)).astype(np.float32)
+            x_cont = rng.normal(size=(n_rows, n_cont)).astype(np.float32)
+            x_cat = np.column_stack([
+                rng.integers(0, 5, size=n_rows, dtype=np.int32),
+                rng.integers(0, 7, size=n_rows, dtype=np.int32),
+            ])
+            np.savez_compressed(
+                path,
+                X_cont=x_cont,
+                X_cat=x_cat,
+                close=close,
+                y_label_5m=rng.integers(0, 3, size=n_rows, dtype=np.int32),
+                y_label_15m=rng.integers(0, 3, size=n_rows, dtype=np.int32),
+                y_label_60m=rng.integers(0, 3, size=n_rows, dtype=np.int32),
+            )
+
+        _write_split(prepared_dir / "train.npz")
+        _write_split(prepared_dir / "val.npz")
+        _write_split(prepared_dir / "test.npz")
+        forged_parquet = prepared_dir / "xauusd_hydra.parquet"
+        forged_parquet.write_text("placeholder", encoding="utf-8")
+
+        results = run_training(
+            max_epochs=1,
+            batch_size=16,
+            full_model=False,
+            checkpoint_dir=str(checkpoint_dir),
+            data_csv=str(forged_parquet),
+        )
+
+        assert results["total_epochs"] == 1
+        assert results["model_params"] > 0
+        assert np.isfinite(results["final_train_loss"])
+        assert np.isfinite(results["final_val_loss"])
+        assert any(checkpoint_dir.glob("*.pt"))
+
 
 class TestBF16Safety:
     """
@@ -336,7 +398,7 @@ class TestBF16Safety:
         assert isinstance(arr, np.ndarray)
         np.testing.assert_allclose(arr, [1.0, 2.0, 3.0], atol=0.1)
 
-    def test_trainer_validate_with_bf16_outputs(self, synthetic_df, temp_checkpoint_dir):
+    def test_trainer_validate_with_bf16_outputs(self, real_df, temp_checkpoint_dir):
         """
         The critical test: run validation and ensure the .numpy() calls
         in _validate() don't crash when outputs have BF16 dtype.
@@ -344,7 +406,7 @@ class TestBF16Safety:
         On CPU, use_amp=False so outputs are float32. We test the code
         paths anyway to verify they work.
         """
-        train_dl, val_dl, _ = _build_dataloaders(synthetic_df, batch_size=16, lookback=16)
+        train_dl, val_dl, _ = _build_dataloaders(real_df, batch_size=16, lookback=16)
 
         config = TrainerConfig(
             max_epochs=1,
@@ -467,12 +529,12 @@ class TestColabConfigMatch:
 class TestEdgeCases:
     """Edge cases that have crashed Colab before."""
 
-    def test_nan_input_handling(self, synthetic_df, temp_checkpoint_dir):
+    def test_nan_input_handling(self, real_df, temp_checkpoint_dir):
         """
         Inject NaN into inputs and verify training doesn't crash.
         The trainer has NaN guards that skip bad batches.
         """
-        df = synthetic_df.copy()
+        df = real_df.copy()
         # Inject some NaNs
         df.loc[10:15, "close"] = np.nan
         df.loc[20:25, "rsi"] = np.inf

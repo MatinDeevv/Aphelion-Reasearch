@@ -190,7 +190,7 @@ class TUIState:
 
     # Feed status (v3 — Phase 5)
     feed_connected: bool = False
-    feed_mode: str = "SIMULATED"
+    feed_mode: str = "DISCONNECTED"
     feed_ticks_per_min: float = 0.0
     feed_reconnect_count: int = 0
     session_duration_min: float = 0.0

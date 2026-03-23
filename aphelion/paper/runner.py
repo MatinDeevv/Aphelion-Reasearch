@@ -29,8 +29,6 @@ from aphelion.paper.feed import (
     FeedMode,
     MT5TickFeed,
     ReplayFeed,
-    SimulatedFeed,
-    SimulatedFeedConfig,
 )
 from aphelion.paper.session import PaperSession, PaperSessionConfig, PaperSessionResult
 from aphelion.risk.sentinel.execution.mt5 import MT5Config, MT5Connection
@@ -54,7 +52,7 @@ class PaperRunnerConfig:
     """Full configuration for an end-to-end paper trading run."""
 
     # Feed mode
-    feed_mode: FeedMode = FeedMode.SIMULATED
+    feed_mode: FeedMode = FeedMode.LIVE
 
     # MT5 connection (only used when feed_mode == MT5_TICK or LIVE)
     mt5_config: MT5Config = field(default_factory=MT5Config)
@@ -64,9 +62,6 @@ class PaperRunnerConfig:
 
     # Session config (financial, HYDRA, strategy, executor)
     session_config: PaperSessionConfig = field(default_factory=PaperSessionConfig)
-
-    # Simulated feed config (FeedMode.SIMULATED)
-    sim_config: SimulatedFeedConfig = field(default_factory=SimulatedFeedConfig)
 
     # Replay bar list (FeedMode.REPLAY — caller supplies)
     replay_bars: list[Bar] = field(default_factory=list)
@@ -90,7 +85,7 @@ class PaperRunner:
 
     Orchestrates:
     1. EventBus + MarketClock setup
-    2. MT5TickFeed (or SimulatedFeed/ReplayFeed) startup
+    2. MT5TickFeed (or ReplayFeed) startup
     3. TUI bridge wiring
     4. PaperSession execution
     5. Graceful shutdown and result collection
@@ -193,9 +188,7 @@ class PaperRunner:
             self._feed = ReplayFeed(self._config.replay_bars)
             return self._feed
         else:
-            # Default: SIMULATED
-            self._feed = SimulatedFeed(self._config.sim_config)
-            return self._feed
+            raise ValueError(f"Unsupported feed mode: {mode}")
 
     async def _create_mt5_tick_feed(self) -> MT5TickFeed:
         """Create and start the MT5 tick-level feed."""

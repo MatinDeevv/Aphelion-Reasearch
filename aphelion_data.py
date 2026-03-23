@@ -154,8 +154,18 @@ def save_msg(path: Path, rows: int, mb: float) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 
 PRIMARY    = "XAUUSD"
-RAW_DIR    = Path("data/raw")
-PROC_DIR   = Path("data/processed")
+
+# Directory structure — organized by symbol
+def get_data_dirs(symbol: str):
+    """Get all data directories for a symbol. Create if needed."""
+    raw_dir    = Path("data") / "raw" / symbol
+    proc_dir   = Path("data") / "processed" / symbol
+    raw_dir.mkdir(parents=True, exist_ok=True)
+    proc_dir.mkdir(parents=True, exist_ok=True)
+    return raw_dir, proc_dir
+
+RAW_DIR    = Path("data/raw")  # fallback for account info & symbol lists
+PROC_DIR   = Path("data/processed")  # fallback
 MODELS_DIR = Path("models/hydra")
 TICK_DAYS  = 1825  # 5 years
 
@@ -251,12 +261,388 @@ def rolling_std(arr: np.ndarray, p: int) -> np.ndarray:
     for i in range(p-1, len(arr)): out[i] = np.std(arr[i-p+1:i+1], ddof=0)
     return out
 
+def resolve_existing_symbol_raw_file(symbol: str, filename: str) -> Path:
+    symbol_raw, _ = get_data_dirs(symbol)
+    nested = symbol_raw / filename
+    if nested.exists():
+        return nested
+    return RAW_DIR / filename
+
 def load_tf(symbol: str, tf: str) -> pd.DataFrame | None:
-    p = RAW_DIR / f"{symbol.lower()}_{tf.lower()}.csv"
+    p = resolve_existing_symbol_raw_file(symbol, f"{symbol.lower()}_{tf.lower()}.csv")
     if not p.exists(): return None
     df = pd.read_csv(p, parse_dates=["time"]).set_index("time").sort_index()
     if not df.index.tz: df.index = df.index.tz_localize("UTC")
     return df
+
+def feat_asian_range(df: pd.DataFrame) -> pd.DataFrame:
+    idx = pd.DatetimeIndex(df.index)
+    idx_utc = idx.tz_convert("UTC") if idx.tz is not None else idx
+    day_key = pd.Series(idx_utc.normalize(), index=df.index)
+    asian_mask = idx_utc.hour < 8
+    asian_high_running = (
+        df["high"].where(asian_mask).groupby(day_key).cummax()
+    )
+    asian_low_running = (
+        df["low"].where(asian_mask).groupby(day_key).cummin()
+    )
+    asian_high_final = asian_high_running.groupby(day_key).transform("last")
+    asian_low_final = asian_low_running.groupby(day_key).transform("last")
+    asian_high = asian_high_running.where(asian_mask, asian_high_final).astype(np.float64)
+    asian_low = asian_low_running.where(asian_mask, asian_low_final).astype(np.float64)
+    close = df["close"].astype(np.float64)
+    prev_close = close.shift(1)
+
+    df["asian_high"] = asian_high
+    df["asian_low"] = asian_low
+    df["asian_range"] = asian_high - asian_low
+    df["asian_range_pct"] = (asian_high - asian_low) / (close + 1e-10) * 100
+    df["above_asian_high"] = (close > asian_high).astype(float)
+    df["below_asian_low"] = (close < asian_low).astype(float)
+    df["inside_asian_range"] = ((close <= asian_high) & (close >= asian_low)).astype(float)
+    df["dist_asian_high"] = (asian_high - close) / (close + 1e-10) * 100
+    df["dist_asian_low"] = (close - asian_low) / (close + 1e-10) * 100
+    df["asian_breakout_up"] = ((close > asian_high) & (prev_close <= asian_high)).astype(float)
+    df["asian_breakout_dn"] = ((close < asian_low) & (prev_close >= asian_low)).astype(float)
+    return df
+
+def feat_previous_levels(df: pd.DataFrame) -> pd.DataFrame:
+    idx = pd.DatetimeIndex(df.index)
+    idx_utc = idx.tz_convert("UTC") if idx.tz is not None else idx
+    idx_naive = idx_utc.tz_localize(None) if idx_utc.tz is not None else idx_utc
+
+    day_key = pd.Series(idx_utc.normalize(), index=df.index)
+    day_stats = df.groupby(day_key).agg(
+        pdh=("high", "max"),
+        pdl=("low", "min"),
+        pdc=("close", "last"),
+    ).shift(1)
+
+    iso = idx_naive.isocalendar()
+    week_key = pd.Series(
+        iso["year"].astype(str) + "-W" + iso["week"].astype(str).str.zfill(2),
+        index=df.index,
+    )
+    week_stats = df.groupby(week_key).agg(
+        pwh=("high", "max"),
+        pwl=("low", "min"),
+    ).shift(1)
+
+    month_key = pd.Series(idx_naive.to_period("M").astype(str), index=df.index)
+    month_stats = df.groupby(month_key).agg(
+        pmh=("high", "max"),
+        pml=("low", "min"),
+    ).shift(1)
+
+    close = df["close"].astype(np.float64)
+    pdh = day_key.map(day_stats["pdh"]).astype(np.float64)
+    pdl = day_key.map(day_stats["pdl"]).astype(np.float64)
+    pdc = day_key.map(day_stats["pdc"]).astype(np.float64)
+    pwh = week_key.map(week_stats["pwh"]).astype(np.float64)
+    pwl = week_key.map(week_stats["pwl"]).astype(np.float64)
+    pmh = month_key.map(month_stats["pmh"]).astype(np.float64)
+    pml = month_key.map(month_stats["pml"]).astype(np.float64)
+
+    df["pdh"] = pdh
+    df["pdl"] = pdl
+    df["pdc"] = pdc
+    df["pwh"] = pwh
+    df["pwl"] = pwl
+    df["pmh"] = pmh
+    df["pml"] = pml
+    df["dist_pdh"] = (pdh - close) / (close + 1e-10) * 100
+    df["dist_pdl"] = (close - pdl) / (close + 1e-10) * 100
+    df["dist_pwh"] = (pwh - close) / (close + 1e-10) * 100
+    df["dist_pwl"] = (close - pwl) / (close + 1e-10) * 100
+    df["dist_pmh"] = (pmh - close) / (close + 1e-10) * 100
+    df["dist_pml"] = (close - pml) / (close + 1e-10) * 100
+    df["above_pdh"] = (close > pdh).astype(float)
+    df["below_pdl"] = (close < pdl).astype(float)
+    df["above_pwh"] = (close > pwh).astype(float)
+    df["below_pwl"] = (close < pwl).astype(float)
+    return df
+
+def feat_liquidity_sweeps(df: pd.DataFrame) -> pd.DataFrame:
+    low = df["low"].astype(np.float64)
+    high = df["high"].astype(np.float64)
+    close = df["close"].astype(np.float64)
+
+    bull_sweep = pd.Series(False, index=df.index)
+    bear_sweep = pd.Series(False, index=df.index)
+    for p in [5, 10, 20]:
+        prior_low = low.rolling(p, min_periods=p).min().shift(1)
+        prior_high = high.rolling(p, min_periods=p).max().shift(1)
+        bull_sweep |= (low < prior_low) & (close > prior_low)
+        bear_sweep |= (high > prior_high) & (close < prior_high)
+
+    ref_low = low.rolling(20, min_periods=20).min().shift(1)
+    ref_high = high.rolling(20, min_periods=20).max().shift(1)
+    sweep_size = pd.Series(0.0, index=df.index, dtype=np.float64)
+    bull_mask = bull_sweep & ref_low.notna()
+    bear_mask = bear_sweep & ref_high.notna()
+    sweep_size.loc[bull_mask] = ((ref_low[bull_mask] - low[bull_mask]) / (close[bull_mask] + 1e-10) * 100).values
+    sweep_size.loc[bear_mask] = ((high[bear_mask] - ref_high[bear_mask]) / (close[bear_mask] + 1e-10) * 100).values
+
+    any_sweep = (bull_sweep | bear_sweep).astype(float)
+    df["bull_liq_sweep"] = bull_sweep.astype(float)
+    df["bear_liq_sweep"] = bear_sweep.astype(float)
+    df["any_liq_sweep"] = any_sweep
+    df["sweep_size_pct"] = sweep_size.values
+    for p in [20, 50]:
+        df[f"sweep_count_{p}"] = any_sweep.rolling(p, min_periods=1).sum().shift(1).fillna(0.0)
+    return df
+
+def feat_dxy_beta(df: pd.DataFrame) -> pd.DataFrame:
+    dxy_col = None
+    for candidate in ["usdx_m5_close", "usdx_h1_close", "usdx_m15_close", "dxy_m5_close", "dxy_h1_close"]:
+        if candidate in df.columns:
+            dxy_col = candidate
+            break
+    if dxy_col is None:
+        return df
+
+    gold = pd.Series(df["close"].astype(np.float64).values, index=df.index)
+    dxy = pd.Series(df[dxy_col].astype(np.float64).values, index=df.index).replace(0.0, np.nan)
+    gold_ret = gold.pct_change(fill_method=None).fillna(0.0)
+    dxy_ret = dxy.pct_change(fill_method=None)
+
+    for p in [20, 60, 240]:
+        min_obs = max(5, p // 2)
+        beta = gold_ret.rolling(p, min_periods=min_obs).cov(dxy_ret) / (
+            dxy_ret.rolling(p, min_periods=min_obs).var() + 1e-10
+        )
+        corr = gold_ret.rolling(p, min_periods=min_obs).corr(dxy_ret)
+        df[f"dxy_beta_{p}"] = beta.values
+        df[f"dxy_corr_{p}"] = corr.values
+        df[f"dxy_corr_negative_{p}"] = (corr.fillna(0.0) < -0.5).astype(float).values
+        df[f"dxy_corr_broken_{p}"] = (corr.fillna(0.0) > 0.0).astype(float).values
+    return df
+
+def feat_order_blocks(df: pd.DataFrame) -> pd.DataFrame:
+    high = df["high"].values.astype(np.float64)
+    low = df["low"].values.astype(np.float64)
+    close = df["close"].values.astype(np.float64)
+    open_ = df["open"].values.astype(np.float64)
+    n = len(df)
+
+    bull_ob = np.zeros(n, dtype=np.float64)
+    bear_ob = np.zeros(n, dtype=np.float64)
+    dist_bull = np.full(n, np.nan, dtype=np.float64)
+    dist_bear = np.full(n, np.nan, dtype=np.float64)
+    displacement_threshold = 0.003
+
+    for i in range(3, n):
+        if close[i - 1] < open_[i - 1]:
+            move = (close[i] - open_[i]) / (open_[i] + 1e-10)
+            if move > displacement_threshold:
+                bull_ob[i - 1] = 1.0
+        if close[i - 1] > open_[i - 1]:
+            move = (open_[i] - close[i]) / (open_[i] + 1e-10)
+            if move > displacement_threshold:
+                bear_ob[i - 1] = 1.0
+
+    bull_levels: list[float] = []
+    bear_levels: list[float] = []
+    for i in range(n):
+        if bull_ob[i]:
+            bull_levels.append((low[i] + high[i]) / 2.0)
+        if bear_ob[i]:
+            bear_levels.append((low[i] + high[i]) / 2.0)
+        bull_levels = bull_levels[-10:]
+        bear_levels = bear_levels[-10:]
+        if bull_levels:
+            dist_bull[i] = min(abs(close[i] - level) / (close[i] + 1e-10) * 100 for level in bull_levels)
+        if bear_levels:
+            dist_bear[i] = min(abs(close[i] - level) / (close[i] + 1e-10) * 100 for level in bear_levels)
+
+    df["bull_ob"] = bull_ob
+    df["bear_ob"] = bear_ob
+    df["dist_bull_ob"] = dist_bull
+    df["dist_bear_ob"] = dist_bear
+    df["near_bull_ob"] = (np.nan_to_num(dist_bull) < 0.2).astype(float)
+    df["near_bear_ob"] = (np.nan_to_num(dist_bear) < 0.2).astype(float)
+    return df
+
+def feat_displacement(df: pd.DataFrame) -> pd.DataFrame:
+    close = df["close"].values.astype(np.float64)
+    open_ = df["open"].values.astype(np.float64)
+    high = df["high"].values.astype(np.float64)
+    low = df["low"].values.astype(np.float64)
+    n = len(df)
+
+    body = np.abs(close - open_)
+    rng = high - low
+    body_pct = body / (rng + 1e-10)
+    prev_close = np.roll(close, 1)
+    prev_close[0] = close[0]
+    tr = np.maximum(high - low, np.maximum(np.abs(high - prev_close), np.abs(low - prev_close)))
+    atr = np.zeros(n, dtype=np.float64)
+    atr[0] = tr[0]
+    for i in range(1, n):
+        atr[i] = 0.9 * atr[i - 1] + 0.1 * tr[i]
+
+    displacement_up = ((body > 2 * atr) & (body_pct > 0.7) & (close > open_)).astype(float)
+    displacement_dn = ((body > 2 * atr) & (body_pct > 0.7) & (close < open_)).astype(float)
+    df["displacement_up"] = displacement_up
+    df["displacement_dn"] = displacement_dn
+    df["displacement_any"] = np.maximum(displacement_up, displacement_dn)
+    df["displacement_size"] = body / (atr + 1e-10)
+
+    bars_since = np.full(n, 999.0, dtype=np.float64)
+    last = 999
+    last_dir = 0.0
+    last_disp_dir = np.zeros(n, dtype=np.float64)
+    for i in range(n):
+        if displacement_up[i] or displacement_dn[i]:
+            last = 0
+            last_dir = 1.0 if displacement_up[i] else -1.0
+        bars_since[i] = last
+        last += 1
+        last_disp_dir[i] = last_dir
+    df["bars_since_displacement"] = np.minimum(bars_since, 100.0)
+    df["last_displacement_dir"] = last_disp_dir
+    return df
+
+def feat_silver_relationship(df: pd.DataFrame) -> pd.DataFrame:
+    ag_col = None
+    for candidate in ["xagusd_m5_close", "xagusd_m15_close", "xagusd_h1_close"]:
+        if candidate in df.columns:
+            ag_col = candidate
+            break
+    if ag_col is None:
+        return df
+
+    close = pd.Series(df["close"].astype(np.float64).values, index=df.index)
+    silver = pd.Series(df[ag_col].astype(np.float64).values, index=df.index).replace(0.0, np.nan)
+    ratio = close / (silver + 1e-10)
+    df["gold_silver_ratio"] = ratio.values
+
+    for p in [20, 60]:
+        ratio_mean = ratio.rolling(p, min_periods=max(5, p // 2)).mean()
+        ratio_std = ratio.rolling(p, min_periods=max(5, p // 2)).std(ddof=0)
+        zscore = (ratio - ratio_mean) / (ratio_std + 1e-10)
+        df[f"gs_ratio_zscore_{p}"] = zscore.values
+        df[f"gs_ratio_high_{p}"] = (zscore.fillna(0.0) > 1.0).astype(float).values
+        df[f"gs_ratio_low_{p}"] = (zscore.fillna(0.0) < -1.0).astype(float).values
+
+    gold_ret = close.pct_change(fill_method=None).fillna(0.0).values
+    silver_ret = silver.pct_change(fill_method=None).fillna(0.0).values
+    for lag in [1, 2, 3, 5]:
+        silver_lead = np.roll(silver_ret, lag)
+        silver_lead[:lag] = 0.0
+        df[f"ag_lead_{lag}_agree"] = (np.sign(silver_lead) == np.sign(gold_ret)).astype(float)
+    return df
+
+def feat_spread_anomaly(df: pd.DataFrame) -> pd.DataFrame:
+    spread_col = None
+    for candidate in ["spread_mean", "spread", "xau_m1_spread"]:
+        if candidate in df.columns:
+            spread_col = candidate
+            break
+    if spread_col is None:
+        return df
+
+    spread = pd.Series(df[spread_col].astype(np.float64).values, index=df.index).replace(0.0, np.nan)
+    for p in [20, 100, 1440]:
+        spread_mean = spread.rolling(p, min_periods=max(5, p // 2)).mean()
+        spread_std = spread.rolling(p, min_periods=max(5, p // 2)).std(ddof=0)
+        spread_z = (spread - spread_mean) / (spread_std + 1e-10)
+        df[f"spread_zscore_{p}"] = spread_z.fillna(0.0).values
+        df[f"spread_elevated_{p}"] = (spread_z.fillna(0.0) > 2.0).astype(float).values
+        df[f"spread_danger_{p}"] = (spread_z.fillna(0.0) > 4.0).astype(float).values
+
+    if "atr_14" in df.columns:
+        atr = pd.Series(df["atr_14"].astype(np.float64).values, index=df.index)
+        spread_vs_atr = spread.fillna(0.0) / (atr + 1e-10)
+        df["spread_vs_atr"] = spread_vs_atr.values
+        df["bad_spread"] = (spread_vs_atr > 0.3).astype(float).values
+    return df
+
+def feat_mtf_confluence(df: pd.DataFrame) -> pd.DataFrame:
+    close = df["close"].values.astype(np.float64)
+    n = len(df)
+    tf_signals: dict[str, np.ndarray] = {}
+    htf_cols = {
+        "m5": "xau_m5_close",
+        "m15": "xau_m15_close",
+        "h1": "xau_h1_close",
+        "h4": "xau_h4_close",
+        "d1": "xau_d1_close",
+    }
+
+    for tf_name, col in htf_cols.items():
+        if col not in df.columns:
+            continue
+        htf_close = np.nan_to_num(df[col].values.astype(np.float64))
+        if len(htf_close) != n:
+            continue
+        htf_ema = np.zeros(n, dtype=np.float64)
+        htf_ema[0] = htf_close[0]
+        for i in range(1, n):
+            htf_ema[i] = 0.095 * htf_close[i] + 0.905 * htf_ema[i - 1]
+        above = (close > htf_ema).astype(float)
+        below = (close < htf_ema).astype(float)
+        tf_signals[tf_name] = above - below
+        df[f"mtf_{tf_name}_bull"] = above
+        df[f"mtf_{tf_name}_bear"] = below
+
+    if tf_signals:
+        stack = np.column_stack(list(tf_signals.values()))
+        df["mtf_bull_count"] = np.sum(stack > 0, axis=1)
+        df["mtf_bear_count"] = np.sum(stack < 0, axis=1)
+        df["mtf_score"] = np.mean(stack, axis=1)
+        df["mtf_full_bull"] = (df["mtf_bull_count"] == stack.shape[1]).astype(float)
+        df["mtf_full_bear"] = (df["mtf_bear_count"] == stack.shape[1]).astype(float)
+        df["mtf_conflict"] = ((df["mtf_bull_count"] > 0) & (df["mtf_bear_count"] > 0)).astype(float)
+    return df
+
+def feat_macro_timing(df: pd.DataFrame) -> pd.DataFrame:
+    idx = pd.DatetimeIndex(df.index)
+    idx_utc = idx.tz_convert("UTC") if idx.tz is not None else idx
+    hours = idx_utc.hour
+    minutes = idx_utc.minute
+    day_of_week = idx_utc.dayofweek
+    day_of_month = idx_utc.day
+
+    is_first_friday = (day_of_month <= 7) & (day_of_week == 4)
+    nfp_window = is_first_friday & (hours == 13)
+    is_second_week = (day_of_month >= 8) & (day_of_month <= 14)
+    is_tue_wed = (day_of_week == 1) | (day_of_week == 2)
+    cpi_window = is_second_week & is_tue_wed & (hours == 13)
+    fed_window = (day_of_week == 2) & (hours >= 18) & (hours <= 20)
+    us_open_danger = (hours == 13) & (minutes >= 15) & (minutes <= 45)
+    london_open_vol = (hours == 7) | ((hours == 8) & (minutes <= 30))
+
+    minutes_in_day = hours * 60 + minutes
+    us_open_minutes = 13 * 60 + 30
+    minutes_to_open = (us_open_minutes - minutes_in_day) % (24 * 60)
+
+    df["nfp_window"] = nfp_window.astype(int)
+    df["nfp_day"] = is_first_friday.astype(int)
+    df["cpi_window"] = cpi_window.astype(int)
+    df["fed_window"] = fed_window.astype(int)
+    df["us_open_danger"] = us_open_danger.astype(int)
+    df["london_open_vol"] = london_open_vol.astype(int)
+    df["high_impact_news"] = (nfp_window | cpi_window | fed_window).astype(int)
+    df["avoid_trading"] = (nfp_window | cpi_window).astype(int)
+    df["mins_to_us_open"] = np.minimum(minutes_to_open, 240)
+    return df
+
+def add_high_value_gold_features(df: pd.DataFrame) -> pd.DataFrame:
+    from aphelion.gold_feature_pack_extra import add_more_high_value_gold_features
+
+    df = feat_asian_range(df)
+    df = feat_previous_levels(df)
+    df = feat_liquidity_sweeps(df)
+    df = feat_dxy_beta(df)
+    df = feat_order_blocks(df)
+    df = feat_displacement(df)
+    df = feat_silver_relationship(df)
+    df = feat_spread_anomaly(df)
+    df = feat_mtf_confluence(df)
+    df = feat_macro_timing(df)
+    df = add_more_high_value_gold_features(df)
+    return df.copy()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ██████████████████████████████████████████████████████
@@ -354,7 +740,12 @@ def fetch_phase(mt5, symbol, resume, no_ticks, tick_days):
         "MN1":mt5.TIMEFRAME_MN1,
     }
     FROM_2000 = datetime(2000, 1, 1, tzinfo=timezone.utc)
+    
+    # Create base directories
     RAW_DIR.mkdir(parents=True, exist_ok=True)
+    
+    # Get symbol-specific directories
+    symbol_raw, symbol_proc = get_data_dirs(symbol)
 
     # ── Account info ──────────────────────────────────────────────────────────
     section(f"XAUUSD — ALL {len(TIMEFRAMES)} TIMEFRAMES — MAX HISTORY", "📈")
@@ -382,19 +773,19 @@ def fetch_phase(mt5, symbol, resume, no_ticks, tick_days):
     info = mt5.symbol_info(symbol)
     if info:
         save_json({k:str(v) for k,v in info._asdict().items()},
-                  RAW_DIR / f"{symbol.lower()}_symbol_info.json")
+                  symbol_raw / f"{symbol.lower()}_symbol_info.json")
         tick = mt5.symbol_info_tick(symbol)
         if tick:
             spread = round(tick.ask - tick.bid, info.digits)
             save_json({"time": datetime.fromtimestamp(tick.time,tz=timezone.utc).isoformat(),
                        "bid":tick.bid,"ask":tick.ask,"spread":spread},
-                      RAW_DIR / f"{symbol.lower()}_live_tick.json")
+                      symbol_raw / f"{symbol.lower()}_live_tick.json")
             log(f"Live {symbol}:  bid={c(C.GREEN, str(tick.bid))}  "
                 f"ask={c(C.RED, str(tick.ask))}  spread={c(C.YELLOW, str(spread))}")
 
     # ── XAUUSD ALL TIMEFRAMES — MAX HISTORY ───────────────────────────────────
     for tf_name, tf_const in TIMEFRAMES.items():
-        out = RAW_DIR / f"{symbol.lower()}_{tf_name.lower()}.csv"
+        out = symbol_raw / f"{symbol.lower()}_{tf_name.lower()}.csv"
         if skip(out, resume): continue
         df = fetch_bars(mt5, symbol, tf_const, tf_name, FROM_2000)
         if df is None: log(f"{tf_name} — no data from broker", "WARN"); continue
@@ -408,9 +799,10 @@ def fetch_phase(mt5, symbol, resume, no_ticks, tick_days):
     for sym in CONTEXT_H1:
         if sym not in avail: continue
         print(c(C.CYAN + C.BOLD, f"\n  ── {sym} ─────────────────────────────────────────"))
+        sym_raw, _ = get_data_dirs(sym)
         mt5.symbol_select(sym, True)
         for tf_name, tf_const in TIMEFRAMES.items():
-            out = RAW_DIR / f"{sym.lower()}_{tf_name.lower()}.csv"
+            out = sym_raw / f"{sym.lower()}_{tf_name.lower()}.csv"
             if skip(out, resume): continue
             df = fetch_bars(mt5, sym, tf_const, f"{sym}:{tf_name}", FROM_2000)
             if df is None: continue
@@ -422,25 +814,48 @@ def fetch_phase(mt5, symbol, resume, no_ticks, tick_days):
     # ── TICK DATA — STREAM TO DISK ─────────────────────────────────────────────
     if not no_ticks:
         section("TICK DATA — EVERY BID/ASK — 5 YEARS", "⚡")
-        _fetch_ticks(mt5, symbol, tick_days, resume)
-        _build_enriched_m1(symbol, resume)
+        _fetch_ticks(mt5, symbol, tick_days, resume, symbol_raw)
+        _build_enriched_m1(symbol, resume, symbol_raw)
 
     log("Fetch phase complete ✓", "DONE")
 
-def _fetch_ticks(mt5, symbol, days_back, resume):
-    out = RAW_DIR / f"{symbol.lower()}_ticks.csv"
-    if skip(out, resume): return
+def _fetch_ticks(mt5, symbol, days_back, resume, symbol_raw):
+    out = symbol_raw / f"{symbol.lower()}_ticks.csv"
+    
+    # Determine starting point for fetch (resume or fresh start)
+    chunk_start = None
+    if out.exists() and resume:
+        # Resume: find the latest date in existing file and start from the next day
+        try:
+            existing_df = pd.read_csv(out, usecols=["datetime_ms"], nrows=100000)
+            if len(existing_df) > 0:
+                last_date_str = existing_df["datetime_ms"].iloc[-1]
+                last_date = pd.to_datetime(last_date_str, utc=True)
+                chunk_start = last_date.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+                log(f"Resuming tick fetch from {c(C.CYAN, str(chunk_start.date()))}", "TICK")
+        except Exception as e:
+            log(f"Could not resume (corrupt file): {e}", "WARN")
+            resume = False
+    
+    if not resume and out.exists():
+        out.unlink()  # Fresh start — delete old file
 
     mt5.symbol_select(symbol, True)
     to_dt   = datetime.now(timezone.utc)
-    from_dt = to_dt - timedelta(days=days_back)
-
-    # Probe actual earliest tick
-    for d in [days_back, 1825, 2555, 3650]:
-        test = to_dt - timedelta(days=d)
-        p    = mt5.copy_ticks_range(symbol, test, test+timedelta(days=1), mt5.COPY_TICKS_ALL)
-        if p is not None and len(p) > 0: from_dt = test
-        else: break
+    
+    # Set from_dt based on resume status
+    if chunk_start is not None:
+        from_dt = chunk_start
+    else:
+        from_dt = to_dt - timedelta(days=days_back)
+        # Probe actual earliest tick
+        for d in [days_back, 1825, 2555, 3650]:
+            test = to_dt - timedelta(days=d)
+            p    = mt5.copy_ticks_range(symbol, test, test+timedelta(days=1), mt5.COPY_TICKS_ALL)
+            if p is not None and len(p) > 0:
+                from_dt = test
+            else:
+                break
 
     total_days = max(1, (to_dt - from_dt).days)
     log(f"Ticks: {c(C.CYAN, str(from_dt.date()))} → {c(C.CYAN, str(to_dt.date()))}  "
@@ -450,15 +865,21 @@ def _fetch_ticks(mt5, symbol, days_back, resume):
             "spread","mid","tick_dir","flags","is_bid","is_ask","is_last",
             "is_volume","is_buy","is_sell","time","time_msc"]
 
-    chunk_start = from_dt; days_done = 0; total = 0
+    # Open in append mode if resuming, write mode if fresh start
+    mode = "a" if (resume and out.exists()) else "w"
+    days_done = 0
+    total = 0
 
-    with open(out, "w", newline="", encoding="utf-8") as f:
+    with open(out, mode, newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=COLS)
-        writer.writeheader()
+        # Only write header if file is new
+        if mode == "w":
+            writer.writeheader()
 
-        while chunk_start < to_dt:
-            chunk_end = min(chunk_start + timedelta(days=1), to_dt)
-            ticks = mt5.copy_ticks_range(symbol, chunk_start, chunk_end, mt5.COPY_TICKS_ALL)
+        chunk_start_iter = from_dt
+        while chunk_start_iter < to_dt:
+            chunk_end = min(chunk_start_iter + timedelta(days=1), to_dt)
+            ticks = mt5.copy_ticks_range(symbol, chunk_start_iter, chunk_end, mt5.COPY_TICKS_ALL)
             n = len(ticks) if ticks is not None else 0
 
             if n > 0:
@@ -480,9 +901,9 @@ def _fetch_ticks(mt5, symbol, days_back, resume):
 
             days_done += 1
             mb = out.stat().st_size / 1e6 if out.exists() else 0
-            print(f"\r{progress_bar(days_done, total_days, str(chunk_start.date()), f'{total:>12,} ticks  {mb:>7.0f} MB')}",
+            print(f"\r{progress_bar(days_done, total_days, str(chunk_start_iter.date()), f'{total:>12,} ticks  {mb:>7.0f} MB')}",
                   end="", flush=True)
-            chunk_start = chunk_end
+            chunk_start_iter = chunk_end
             time.sleep(0.02)
 
     print()
@@ -490,12 +911,21 @@ def _fetch_ticks(mt5, symbol, days_back, resume):
     STATS.ticks_fetched = total
     log(f"{c(C.BOLD, f'{total:,}')} ticks  {c(C.YELLOW, f'{mb:.0f} MB')} → {out.name}", "TICK")
 
-def _build_enriched_m1(symbol, resume):
+def _build_enriched_m1(symbol, resume, symbol_raw):
     section("ENRICHED M1 FROM TICKS", "🔬")
-    out = RAW_DIR / f"{symbol.lower()}_m1_enriched.csv"
+    out = symbol_raw / f"{symbol.lower()}_m1_enriched.csv"
     if skip(out, resume): return
-    tick_path = RAW_DIR / f"{symbol.lower()}_ticks.csv"
+    tick_path = symbol_raw / f"{symbol.lower()}_ticks.csv"
     if not tick_path.exists(): log("No tick file", "WARN"); return
+
+    # Check if tick file has any data (skip if empty/header-only)
+    try:
+        tick_size = tick_path.stat().st_size
+        if tick_size < 500:  # Too small — likely just header
+            log("Tick file is empty or too small; skipping enrichment", "WARN")
+            return
+    except Exception:
+        pass
 
     log("Reading tick CSV in 5M-row chunks and aggregating...")
     agg_chunks = []; rows_read = 0
@@ -545,7 +975,8 @@ def _build_enriched_m1(symbol, resume):
 def build_features_phase(symbol, resume):
     section("BUILDING 700+ FEATURE DATASET", "🔬")
 
-    out = PROC_DIR / "xauusd_hydra.parquet"
+    _, symbol_proc = get_data_dirs(symbol)
+    out = symbol_proc / f"{symbol.lower()}_hydra.parquet"
     if skip(out, resume): return
 
     # Load M1
@@ -555,7 +986,7 @@ def build_features_phase(symbol, resume):
         f"{c(C.DIM, str(m1.index[0].date()))} → {c(C.DIM, str(m1.index[-1].date()))}")
 
     # Merge tick features
-    ep = RAW_DIR / f"{symbol.lower()}_m1_enriched.csv"
+    ep = resolve_existing_symbol_raw_file(symbol, f"{symbol.lower()}_m1_enriched.csv")
     if ep.exists():
         e = pd.read_csv(ep, parse_dates=["time"]).set_index("time")
         if not e.index.tz: e.index = e.index.tz_localize("UTC")
@@ -758,9 +1189,6 @@ def build_features_phase(symbol, resume):
     feat["hurst"]=hurst; feat["trending_hurst"]=(hurst>0.55).astype(float)
     log(f"  Hurst exponent computed")
 
-    STATS.features_built = len(feat)
-    log(f"Total features computed: {c(C.BOLD+C.GREEN, str(len(feat)))}", "FEAT")
-
     # Add labels
     for horizon in [5,15,30,60,240,1440]:
         fut=np.full(n,np.nan); fut[:n-horizon]=(c_arr[horizon:]-c_arr[:n-horizon])/(c_arr[:n-horizon]+1e-10)*100
@@ -770,6 +1198,19 @@ def build_features_phase(symbol, resume):
     # Build final dataframe
     feat_df = pd.DataFrame(feat, index=m1.index)
     df_final = pd.concat([m1, feat_df], axis=1)
+    before_cols = len(df_final.columns)
+    df_final = add_high_value_gold_features(df_final)
+    added_cols = len(df_final.columns) - before_cols
+    STATS.features_built = len(df_final.columns)
+    log(f"Gold-specific feature pack added: {c(C.GREEN, str(added_cols))} columns", "FEAT")
+    log(f"Total dataframe columns before clean: {c(C.BOLD+C.GREEN, str(len(df_final.columns)))}", "FEAT")
+    dup_mask = df_final.columns.duplicated(keep="last")
+    if dup_mask.any():
+        dup_cols = pd.Index(df_final.columns[dup_mask]).unique().tolist()
+        preview = ", ".join(dup_cols[:10])
+        suffix = " ..." if len(dup_cols) > 10 else ""
+        log(f"Dropping duplicate feature names ({len(dup_cols)}): {preview}{suffix}", "WARN")
+        df_final = df_final.loc[:, ~df_final.columns.duplicated(keep="last")].copy()
 
     # Clean
     nan_frac = df_final.isnull().mean(axis=1)
@@ -780,7 +1221,7 @@ def build_features_phase(symbol, resume):
     if empty: df_final = df_final.drop(columns=empty)
     df_final = df_final.copy()
 
-    PROC_DIR.mkdir(parents=True, exist_ok=True)
+    symbol_proc.mkdir(parents=True, exist_ok=True)
     df_final.to_parquet(out, index=True)
     mb = out.stat().st_size / 1e6
     STATS.add(len(df_final), mb)
@@ -789,7 +1230,7 @@ def build_features_phase(symbol, resume):
         f"{c(C.YELLOW, f'{mb:.0f} MB')}", "SAVE")
 
     # Save feature list
-    feat_path = PROC_DIR / "feature_columns.txt"
+    feat_path = symbol_proc / "feature_columns.txt"
     with open(feat_path, "w") as f:
         for col in df_final.columns: f.write(col+"\n")
     log(f"Feature list saved → {feat_path.name} ({len(df_final.columns)} features)")
@@ -810,7 +1251,7 @@ def prepare_dataset_phase(symbol: str, resume: bool) -> Path | None:
     ready-to-use .npz files that train_hydra.py loads instantly.
 
     Output files:
-      data/processed/
+      data/processed/{SYMBOL}/
         train.npz       ← X_cont, X_cat, y_5m, y_15m, y_60m, timestamps
         val.npz
         test.npz
@@ -818,18 +1259,20 @@ def prepare_dataset_phase(symbol: str, resume: bool) -> Path | None:
         dataset_meta.json  ← splits, shapes, feature names, label counts
     """
     section("PREPARING TRAINING DATASET", "📦")
+    
+    _, symbol_proc = get_data_dirs(symbol)
 
-    out_train = PROC_DIR / "train.npz"
-    out_val   = PROC_DIR / "val.npz"
-    out_test  = PROC_DIR / "test.npz"
-    out_scaler= PROC_DIR / "scaler.json"
-    out_meta  = PROC_DIR / "dataset_meta.json"
+    out_train = symbol_proc / "train.npz"
+    out_val   = symbol_proc / "val.npz"
+    out_test  = symbol_proc / "test.npz"
+    out_scaler= symbol_proc / "scaler.json"
+    out_meta  = symbol_proc / "dataset_meta.json"
 
     if resume and all(p.exists() for p in [out_train, out_val, out_test]):
         log("Dataset files already exist — skipping (use --from-scratch to rebuild)", "WARN")
         return out_train
 
-    parquet = PROC_DIR / "xauusd_hydra.parquet"
+    parquet = symbol_proc / f"{symbol.lower()}_hydra.parquet"
     if not parquet.exists():
         log("No parquet found — run build_features phase first", "ERROR")
         return None
@@ -841,7 +1284,14 @@ def prepare_dataset_phase(symbol: str, resume: bool) -> Path | None:
 
     # ── Identify feature columns ──────────────────────────────────────────────
     # Label columns and raw price cols we don't want as features
-    EXCLUDE_PREFIXES = ["label_", "future_ret_"]
+    EXCLUDE_PREFIXES = [
+        "label_",
+        "future_ret_",
+        "conviction_",
+        "easy_",
+        "hard_trade_",
+        "move_magnitude_",
+    ]
     EXCLUDE_EXACT    = {"open","high","low","close","tick_vol","real_vol",
                         "spread","time","datetime","datetime_ms",
                         "time_msc","time_s","flags"}
@@ -1067,10 +1517,11 @@ def prepare_dataset_phase(symbol: str, resume: bool) -> Path | None:
             "test":  str(out_test),
         },
         "how_to_load": (
-            "data = np.load('data/processed/train.npz', allow_pickle=True)\n"
-            "X_cont = data['X_cont']   # shape (N, n_features)\n"
-            "X_cat  = data['X_cat']    # shape (N, 2)\n"
-            "y      = data['y_label_5m']  # shape (N,) values 0=SHORT 1=FLAT 2=LONG"
+            f"# Load symbol-specific training data\n"
+            f"data = np.load('data/processed/{symbol}/train.npz', allow_pickle=True)\n"
+            f"X_cont = data['X_cont']   # shape (N, n_features)\n"
+            f"X_cat  = data['X_cat']    # shape (N, 2)\n"
+            f"y      = data['y_label_5m']  # shape (N,) values 0=SHORT 1=FLAT 2=LONG"
         ),
     }
     save_json(meta, out_meta)
@@ -1118,7 +1569,7 @@ def train_phase(data_path: Path):
         from scripts.train_hydra import run_training
         log(f"Starting HYDRA training on {c(C.CYAN, str(data_path))}...", "TRAIN")
         results = run_training(
-            data_path   = str(data_path),
+            data_csv    = str(data_path),
             max_epochs  = 100,
             batch_size  = 512 if gpu else 64,
             full_model  = True,
@@ -1146,16 +1597,20 @@ def main():
     parser.add_argument("--prepare-only",  action="store_true", help="Only prepare dataset from existing parquet")
     parser.add_argument("--no-train",      action="store_true", help="Fetch + build but skip training")
     parser.add_argument("--no-ticks",      action="store_true", help="Skip tick data (much faster)")
-    parser.add_argument("--resume",        action="store_true", help="Skip already-downloaded files")
+    parser.add_argument("--resume",        action="store_true", help="Resume partial downloads (skip existing bars, continue ticks from last date)")
     parser.add_argument("--from-scratch",  action="store_true", help="Delete existing data and restart")
     parser.add_argument("--symbol",        default=PRIMARY,     help=f"Primary symbol (default {PRIMARY})")
     parser.add_argument("--tick-days",     type=int, default=TICK_DAYS, help="Days of tick history")
     args = parser.parse_args()
 
+    # Determine symbol and its directories
+    symbol = args.symbol
+    symbol_raw, symbol_proc = get_data_dirs(symbol)
+
     # Wipe if requested
     if args.from_scratch:
         section("CLEARING EXISTING DATA", "🗑")
-        for d in [RAW_DIR, PROC_DIR]:
+        for d in [symbol_raw, symbol_proc]:
             if d.exists():
                 freed = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
                 shutil.rmtree(d)
@@ -1163,7 +1618,8 @@ def main():
         args.resume = False
 
     RAW_DIR.mkdir(parents=True, exist_ok=True)
-    PROC_DIR.mkdir(parents=True, exist_ok=True)
+    symbol_raw.mkdir(parents=True, exist_ok=True)
+    symbol_proc.mkdir(parents=True, exist_ok=True)
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
     t0 = time.time()
@@ -1172,23 +1628,23 @@ def main():
     if not args.features_only and not args.train_only and not getattr(args,'prepare_only',False):
         mt5 = init_mt5()
         connect_mt5(mt5)
-        fetch_phase(mt5, args.symbol, args.resume, args.no_ticks, args.tick_days)
+        fetch_phase(mt5, symbol, args.resume, args.no_ticks, args.tick_days)
         mt5.shutdown()
         log("MT5 disconnected", "INFO")
 
     # ── PHASE 2: BUILD FEATURES ───────────────────────────────────────────────
     data_path = None
     if not args.fetch_only and not args.train_only and not getattr(args,'prepare_only',False):
-        data_path = build_features_phase(args.symbol, args.resume)
+        data_path = build_features_phase(symbol, args.resume)
 
     # ── PHASE 4: PREPARE DATASET ─────────────────────────────────────────────
     if not args.fetch_only and not args.train_only or getattr(args,'prepare_only',False):
-        prepare_dataset_phase(args.symbol, args.resume)
+        prepare_dataset_phase(symbol, args.resume)
 
     # ── PHASE 3: TRAIN ────────────────────────────────────────────────────────
     if not args.fetch_only and not args.features_only and not args.no_train:
         if data_path is None:
-            data_path = PROC_DIR / "xauusd_hydra.parquet"
+            data_path = symbol_proc / f"{symbol.lower()}_hydra.parquet"
         if data_path.exists():
             train_phase(data_path)
         else:
@@ -1203,8 +1659,8 @@ def main():
   ┌──────────────────────────────────────────────────────┐
   │  APHELION DATA FORGE COMPLETE                        │
   │                                                      │
-  │  Data:      {str(RAW_DIR.absolute()):<40} │
-  │  Features:  {str(PROC_DIR/'xauusd_hydra.parquet'):<40} │
+  │  Data:      {str(symbol_raw.absolute()):<40} │
+  │  Features:  {str(symbol_proc / f'{symbol.lower()}_hydra.parquet'):<40} │
   │  Model:     {str(MODELS_DIR):<40} │
   │  Total time: {elapsed/60:.1f} minutes                           │
   └──────────────────────────────────────────────────────┘

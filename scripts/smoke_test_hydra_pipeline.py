@@ -43,8 +43,9 @@ from aphelion.intelligence.hydra.ensemble import HydraGate
 from aphelion.intelligence.hydra.trainer import HydraTrainer, TrainerConfig
 from scripts.train_hydra import (
     build_small_ensemble_config,
-    generate_synthetic_data,
+    load_prepared_datasets,
     load_real_data,
+    resolve_prepared_split_dir,
 )
 
 
@@ -68,19 +69,24 @@ def _resolve_device(requested: str) -> str:
     return requested
 
 
-def _load_frame(data_path: str, bars: int):
-    if data_path:
-        path = Path(data_path)
-        if not path.exists():
-            raise SystemExit(f"Data file not found: {path}")
-        df = load_real_data(str(path))
-        source = f"real:{path}"
-    else:
-        df = generate_synthetic_data(bars)
-        source = f"synthetic:{bars}"
+def _load_frame(data_path: str):
+    if not data_path:
+        raise SystemExit(
+            "A data path is required. Pass a real OHLCV CSV, a forged parquet path, "
+            "a prepared split directory, or a train.npz path."
+        )
+    path = Path(data_path)
+    if not path.exists():
+        raise SystemExit(f"Data file not found: {path}")
+
+    prepared_dir = resolve_prepared_split_dir(str(path))
+    if prepared_dir is not None and (path.is_dir() or path.suffix.lower() in {".npz", ".parquet"}):
+        return None, f"prepared:{prepared_dir}"
+
+    df = load_real_data(str(path))
     if df.empty:
         raise SystemExit("Loaded dataframe is empty.")
-    return df, source
+    return df, f"real:{path}"
 
 
 def _build_dataloaders(df, batch_size: int, lookback: int):
@@ -107,7 +113,14 @@ def _build_dataloaders(df, batch_size: int, lookback: int):
     return train_ds, val_ds, test_ds, train_dl, val_dl, test_dl
 
 
-def _check_batch(train_dl, device: str):
+def _build_prepared_dataloaders(data_path: str, batch_size: int, lookback: int):
+    train_ds, val_ds, test_ds, n_cont, n_cat, base_dir = load_prepared_datasets(data_path, lookback=lookback)
+    ds_config = DatasetConfig(batch_size=batch_size, num_workers=0, lookback_bars=lookback)
+    train_dl, val_dl, test_dl = create_dataloaders(train_ds, val_ds, test_ds, config=ds_config)
+    return train_ds, val_ds, test_ds, train_dl, val_dl, test_dl, n_cont, n_cat, base_dir
+
+
+def _check_batch(train_dl, device: str, n_cont: int, n_cat: int, lookback: int):
     batch = next(iter(train_dl))
     if len(batch) != 6:
         raise SystemExit(f"Expected 6 tensors per batch, got {len(batch)}.")
@@ -118,7 +131,13 @@ def _check_batch(train_dl, device: str):
     if cat.ndim not in (2, 3):
         raise SystemExit(f"Categorical features should be 2D or 3D, got {cat.ndim}D.")
 
-    model = HydraGate(build_small_ensemble_config()).to(device)
+    model = HydraGate(
+        build_small_ensemble_config(
+            n_continuous=n_cont,
+            n_categorical=n_cat,
+            lookback=lookback,
+        )
+    ).to(device)
     model.eval()
 
     with torch.inference_mode():
@@ -138,7 +157,16 @@ def _check_batch(train_dl, device: str):
     print(f"  model_params={model.count_parameters():,}")
 
 
-def _run_train(train_dl, val_dl, device: str, epochs: int, checkpoint_dir: str):
+def _run_train(
+    train_dl,
+    val_dl,
+    device: str,
+    epochs: int,
+    checkpoint_dir: str,
+    n_cont: int,
+    n_cat: int,
+    lookback: int,
+):
     ckpt_dir = Path(checkpoint_dir)
     existing = {p.name for p in ckpt_dir.glob("*.pt")} if ckpt_dir.exists() else set()
 
@@ -146,7 +174,11 @@ def _run_train(train_dl, val_dl, device: str, epochs: int, checkpoint_dir: str):
         max_epochs=epochs,
         learning_rate=1e-3,
         use_amp=(device == "cuda"),
-        ensemble_config=build_small_ensemble_config(),
+        ensemble_config=build_small_ensemble_config(
+            n_continuous=n_cont,
+            n_categorical=n_cat,
+            lookback=lookback,
+        ),
         checkpoint_dir=str(ckpt_dir),
         save_every_n_epochs=1,
         patience=max(3, epochs),
@@ -189,8 +221,12 @@ def _run_train(train_dl, val_dl, device: str, epochs: int, checkpoint_dir: str):
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Smoke test the HYDRA training pipeline.")
-    parser.add_argument("--data", type=str, default="", help="Optional path to real OHLCV CSV.")
-    parser.add_argument("--bars", type=int, default=500, help="Synthetic bars to generate if --data is absent.")
+    parser.add_argument(
+        "--data",
+        type=str,
+        required=True,
+        help="Path to real OHLCV CSV, forged parquet, prepared split directory, or train.npz path.",
+    )
     parser.add_argument("--epochs", type=int, default=2, help="Short training epochs to run.")
     parser.add_argument("--batch-size", type=int, default=16, help="Batch size for the smoke test.")
     parser.add_argument("--lookback", type=int, default=16, help="Lookback window for the dataset.")
@@ -209,31 +245,45 @@ def main() -> None:
     args = parser.parse_args()
 
     device = _resolve_device(args.device)
-    df, source = _load_frame(args.data, args.bars)
-    train_ds, val_ds, test_ds, train_dl, val_dl, _ = _build_dataloaders(
-        df,
-        batch_size=args.batch_size,
-        lookback=args.lookback,
-    )
+    df, source = _load_frame(args.data)
+    if df is None:
+        train_ds, val_ds, test_ds, train_dl, val_dl, _, n_cont, n_cat, base_dir = _build_prepared_dataloaders(
+            args.data,
+            batch_size=args.batch_size,
+            lookback=args.lookback,
+        )
+        row_count = len(train_ds) + len(val_ds) + len(test_ds)
+        source = f"prepared:{base_dir}"
+    else:
+        train_ds, val_ds, test_ds, train_dl, val_dl, _ = _build_dataloaders(
+            df,
+            batch_size=args.batch_size,
+            lookback=args.lookback,
+        )
+        n_cont = train_ds.x_cont.shape[1]
+        n_cat = train_ds.x_cat.shape[1]
+        row_count = len(df)
 
     print("HYDRA pipeline smoke test")
     print(f"  torch={torch.__version__}")
     print(f"  device={device}")
     print(f"  source={source}")
-    print(f"  rows={len(df):,}")
+    print(f"  rows={row_count:,}")
     print(f"  train={len(train_ds):,} val={len(val_ds):,} test={len(test_ds):,}")
+    print(f"  features_cont={n_cont} features_cat={n_cat}")
     print(f"  batch_size={args.batch_size} lookback={args.lookback} epochs={args.epochs}")
     if torch.cuda.is_available():
         print(f"  cuda_device={torch.cuda.get_device_name(0)}")
 
-    numeric = df.select_dtypes(include=[np.number])
-    if numeric.isna().any().any():
-        raise SystemExit("Numeric dataframe columns still contain NaN values.")
-    if np.isinf(numeric.to_numpy()).any():
-        raise SystemExit("Numeric dataframe columns still contain Inf values.")
+    if df is not None:
+        numeric = df.select_dtypes(include=[np.number])
+        if numeric.isna().any().any():
+            raise SystemExit("Numeric dataframe columns still contain NaN values.")
+        if np.isinf(numeric.to_numpy()).any():
+            raise SystemExit("Numeric dataframe columns still contain Inf values.")
 
-    _check_batch(train_dl, device)
-    _run_train(train_dl, val_dl, device, args.epochs, args.checkpoint_dir)
+    _check_batch(train_dl, device, n_cont, n_cat, args.lookback)
+    _run_train(train_dl, val_dl, device, args.epochs, args.checkpoint_dir, n_cont, n_cat, args.lookback)
 
     print("PASS: HYDRA pipeline completed end-to-end.")
 

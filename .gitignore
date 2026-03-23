@@ -25,16 +25,7 @@ env/
 .DS_Store
 Thumbs.db
 
-# Project data (large files)
-data/ticks/
-data/bars/
-data/features/
-data/gauntlet/
-data/external/
-models/
-genomes/archive/
-nemesis_sessions/
-aphelion_training_data/
+
 
 # Logs
 logs/*.db
@@ -49,3 +40,23 @@ credentials.*
 node_modules/
 package.json
 package-lock.json
+
+# Research artifacts and local datasets
+data/raw/
+data/processed/
+data/_archive_legacy_flat_raw/
+models/
+genomes/
+aphelion_training_data/
+
+# ML artifacts
+*.parquet
+*.npz
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Local broker/account exports
+account_info.json
+all_symbols.csv

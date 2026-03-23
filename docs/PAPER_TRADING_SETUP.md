@@ -2,12 +2,12 @@
 
 ## Overview
 
-The APHELION paper trading system simulates live trading of XAU/USD (Gold) using real-time MT5 data or synthetic feeds, with full SENTINEL risk management, HYDRA signal generation, and Bloomberg-grade TUI dashboard.
+The APHELION paper trading system runs live trading of XAU/USD (Gold) using real-time MT5 data or replayed historical bars, with full SENTINEL risk management, HYDRA signal generation, and Bloomberg-grade TUI dashboard.
 
 ### Architecture
 
 ```
-MT5TickFeed / SimulatedFeed / ReplayFeed
+MT5TickFeed / ReplayFeed
         │
         ▼
    EventBus (tick / bar events)
@@ -47,15 +47,13 @@ PaperExecutor ──► PaperLedger (JSON-Lines audit trail)
 
 ## Quick Start
 
-### 1. Simulated Mode (No MT5 Required)
+### 1. Live Mode (MT5 Required)
 
 ```bash
 python run_paper.py
 ```
 
-This runs 500 synthetic random-walk bars through the full pipeline. No external dependencies needed.
-
-### 2. Live MT5 Tick Feed
+Connects to MT5 for real-time market data. Requires MetaTrader5 package and terminal running.
 
 ```bash
 python run_paper.py \
@@ -66,7 +64,7 @@ python run_paper.py \
     --capital 10000
 ```
 
-### 3. With HYDRA Model
+### 2. With HYDRA Model
 
 ```bash
 python run_paper.py \
@@ -169,16 +167,15 @@ Keyboard shortcuts: F1-F5 for view switching.
 ```python
 import asyncio
 from aphelion.paper.runner import PaperRunner, PaperRunnerConfig
-from aphelion.paper.feed import FeedMode, SimulatedFeedConfig
+from aphelion.paper.feed import FeedMode
 from aphelion.paper.session import PaperSessionConfig
 
 config = PaperRunnerConfig(
-    feed_mode=FeedMode.SIMULATED,
+    feed_mode=FeedMode.LIVE,
     session_config=PaperSessionConfig(
         initial_capital=10_000.0,
         warmup_bars=64,
     ),
-    sim_config=SimulatedFeedConfig(max_bars=1000),
     enable_tui=False,
 )
 

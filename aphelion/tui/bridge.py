@@ -267,7 +267,7 @@ class TUIBridge:
     def update_feed_status(
         self,
         connected: bool,
-        mode: str = "SIMULATED",
+        mode: str = "LIVE",
         ticks_per_min: float = 0.0,
         reconnect_count: int = 0,
     ) -> None:

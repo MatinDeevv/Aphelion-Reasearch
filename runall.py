@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from aphelion.paper.feed import FeedMode, SimulatedFeedConfig
+from aphelion.paper.feed import FeedMode
 from aphelion.paper.runner import PaperRunner, PaperRunnerConfig
 from aphelion.paper.session import PaperSessionConfig
 from aphelion.tui.app import AphelionTUI, TUIConfig
@@ -56,7 +56,6 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="APHELION all-in-one live demo")
     parser.add_argument("--capital", type=float, default=10_000.0, help="Starting paper capital")
     parser.add_argument("--symbol", type=str, default="XAUUSD", help="Trading symbol")
-    parser.add_argument("--sim-bars", type=int, default=0, help="Sim bars (0 = infinite)")
     parser.add_argument("--warmup", type=int, default=64, help="Warmup bars")
     parser.add_argument("--no-training", action="store_true", help="Do not start background training")
     parser.add_argument("--train-full", action="store_true", help="Use full training config")
@@ -85,13 +84,36 @@ def _find_hydra_checkpoint() -> str:
     return ""
 
 
-def _start_training_subprocess(train_full: bool) -> subprocess.Popen:
+def _start_training_subprocess(train_full: bool, symbol: str = "XAUUSD") -> subprocess.Popen:
     """Start training in background and write logs to logs/train_hydra_live.log."""
     Path("logs").mkdir(exist_ok=True)
     log_path = Path("logs/train_hydra_live.log")
     log_file = log_path.open("a", encoding="utf-8")
 
-    cmd = [sys.executable, "scripts/train_hydra.py"]
+    # Find a real data file for training (symbol-specific)
+    sym_lower = symbol.lower()
+    data_candidates = [
+        Path(f"data/processed/{symbol}/{sym_lower}_hydra.parquet"),
+        Path(f"data/raw/{symbol}/{sym_lower}_m5.csv"),
+        Path(f"data/raw/{symbol}/{sym_lower}_m1.csv"),
+        # Fallback to flat structure for backward compatibility
+        Path("data/processed/xauusd_hydra.parquet"),
+        Path("data/bars/xauusd_m5.csv"),
+        Path("data/bars/xauusd_m1.csv"),
+    ]
+    data_path = ""
+    for candidate in data_candidates:
+        if candidate.exists():
+            data_path = str(candidate)
+            break
+
+    if not data_path:
+        raise FileNotFoundError(
+            f"No real data found for {symbol}. "
+            "Run aphelion_data.py first to fetch and prepare data."
+        )
+
+    cmd = [sys.executable, "scripts/train_hydra.py", "--data", data_path]
     if train_full:
         cmd.append("--full")
 
@@ -129,7 +151,7 @@ async def main() -> None:
 
     training_proc: Optional[subprocess.Popen] = None
     if not args.no_training:
-        training_proc = _start_training_subprocess(args.train_full)
+        training_proc = _start_training_subprocess(args.train_full, args.symbol)
         logger.info("Background training started (PID %s). Logs: logs/train_hydra_live.log", training_proc.pid)
 
     # ── Build ARES governance pipeline ──────────────────────────────────
@@ -152,16 +174,12 @@ async def main() -> None:
         logger.warning("ARES not available — session will run without governance layer")
 
     config = PaperRunnerConfig(
-        feed_mode=FeedMode.SIMULATED,
+        feed_mode=FeedMode.LIVE,
         session_config=PaperSessionConfig(
             initial_capital=args.capital,
             symbol=args.symbol,
             hydra_checkpoint=checkpoint,
             warmup_bars=max(32, args.warmup),
-        ),
-        sim_config=SimulatedFeedConfig(
-            max_bars=args.sim_bars,
-            symbol=args.symbol,
         ),
         enable_tui=True,
         ares=ares,

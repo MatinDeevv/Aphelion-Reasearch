@@ -8,7 +8,7 @@ import pytest
 
 from aphelion.core.config import Timeframe
 from aphelion.core.data_layer import Bar
-from aphelion.paper.feed import FeedConfig, FeedMode, SimulatedFeedConfig
+from aphelion.paper.feed import FeedConfig, FeedMode
 from aphelion.paper.runner import PaperRunner, PaperRunnerConfig
 from aphelion.paper.session import PaperSessionConfig, PaperSessionResult
 from aphelion.risk.sentinel.execution.mt5 import MT5Config
@@ -33,15 +33,16 @@ def _make_bar(ts_offset: int = 0, close: float = 2350.0) -> Bar:
     )
 
 
-def _sim_runner_config(max_bars: int = 50) -> PaperRunnerConfig:
-    """Create a runner config for simulated mode with limited bars."""
+def _replay_runner_config(n_bars: int = 50) -> PaperRunnerConfig:
+    """Create a runner config for replay mode with pre-built bars."""
+    bars = [_make_bar(ts_offset=i, close=2350.0 + i * 0.1) for i in range(n_bars)]
     return PaperRunnerConfig(
-        feed_mode=FeedMode.SIMULATED,
+        feed_mode=FeedMode.REPLAY,
         session_config=PaperSessionConfig(
             initial_capital=10_000.0,
             warmup_bars=5,
         ),
-        sim_config=SimulatedFeedConfig(max_bars=max_bars, seed=42),
+        replay_bars=bars,
         enable_tui=False,
     )
 
@@ -55,9 +56,9 @@ class TestPaperRunnerConfig:
     """Tests for PaperRunnerConfig dataclass."""
 
     def test_defaults(self):
-        """Default config should use SIMULATED mode."""
+        """Default config should use LIVE mode."""
         cfg = PaperRunnerConfig()
-        assert cfg.feed_mode == FeedMode.SIMULATED
+        assert cfg.feed_mode == FeedMode.LIVE
         assert cfg.enable_tui is True
         assert cfg.session_config.initial_capital == 10_000.0
 
@@ -79,11 +80,11 @@ class TestPaperRunnerConfig:
 
 
 class TestPaperRunner:
-    """Tests for PaperRunner with simulated feed."""
+    """Tests for PaperRunner with replay feed."""
 
-    async def test_simulated_run_completes(self):
-        """Runner should complete a simulated run and return results."""
-        config = _sim_runner_config(max_bars=30)
+    async def test_replay_run_completes(self):
+        """Runner should complete a replay run and return results."""
+        config = _replay_runner_config(n_bars=30)
         runner = PaperRunner(config)
         result = await runner.run()
 
@@ -93,7 +94,7 @@ class TestPaperRunner:
 
     async def test_result_has_session_id(self):
         """Result should carry the session ID from config."""
-        config = _sim_runner_config(max_bars=10)
+        config = _replay_runner_config(n_bars=10)
         runner = PaperRunner(config)
         result = await runner.run()
 
@@ -101,7 +102,7 @@ class TestPaperRunner:
 
     async def test_equity_preserved_without_trades(self):
         """Without HYDRA, equity should stay near initial capital."""
-        config = _sim_runner_config(max_bars=20)
+        config = _replay_runner_config(n_bars=20)
         runner = PaperRunner(config)
         result = await runner.run()
 
@@ -111,7 +112,7 @@ class TestPaperRunner:
 
     async def test_stop_signal(self):
         """stop() should end the session gracefully."""
-        config = _sim_runner_config(max_bars=0)  # Infinite
+        config = _replay_runner_config(n_bars=200)
         runner = PaperRunner(config)
 
         async def stop_after_delay():
@@ -127,7 +128,7 @@ class TestPaperRunner:
 
     async def test_tui_state_created_when_enabled(self):
         """When TUI is enabled, runner should create TUIState."""
-        config = _sim_runner_config(max_bars=10)
+        config = _replay_runner_config(n_bars=10)
         config.enable_tui = True
         runner = PaperRunner(config)
 
@@ -139,7 +140,7 @@ class TestPaperRunner:
 
     async def test_no_tui_when_disabled(self):
         """When TUI is disabled, state and bridge should be None."""
-        config = _sim_runner_config(max_bars=10)
+        config = _replay_runner_config(n_bars=10)
         config.enable_tui = False
         runner = PaperRunner(config)
 

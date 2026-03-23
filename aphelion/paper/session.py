@@ -3,7 +3,7 @@ APHELION Paper Trading Session Orchestrator
 Async main loop that wires:
   DataFeed → FeatureEngine → HYDRA → ARES → SOLA → SENTINEL → PaperExecutor → Ledger
 
-Supports three data-feed modes: LIVE (MT5), REPLAY, and SIMULATED.
+Supports two data-feed modes: LIVE (MT5) and REPLAY.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from aphelion.core.event_bus import EventBus
 from aphelion.features.engine import FeatureEngine
 from aphelion.intelligence.hydra.inference import HydraInference, HydraSignal
 from aphelion.intelligence.hydra.strategy import HydraStrategy, StrategyConfig
-from aphelion.paper.feed import DataFeed, FeedMode, ReplayFeed, SimulatedFeed, SimulatedFeedConfig
+from aphelion.paper.feed import DataFeed, FeedMode, ReplayFeed
 from aphelion.paper.ledger import PaperLedger
 from aphelion.risk.sentinel.circuit_breaker import CircuitBreaker
 from aphelion.risk.sentinel.core import SentinelCore

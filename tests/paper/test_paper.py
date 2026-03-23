@@ -16,8 +16,6 @@ from aphelion.core.data_layer import Bar, DataLayer
 from aphelion.core.event_bus import EventBus
 from aphelion.paper.feed import (
     ReplayFeed,
-    SimulatedFeed,
-    SimulatedFeedConfig,
 )
 from aphelion.paper.ledger import PaperLedger
 from aphelion.risk.sentinel.circuit_breaker import CircuitBreaker
@@ -267,67 +265,6 @@ class TestPaperExecutor:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
-class TestSimulatedFeed:
-    """Tests for the random-walk simulated data feed."""
-
-    async def test_generates_bars(self):
-        """Simulated feed should generate the requested number of bars."""
-        config = SimulatedFeedConfig(max_bars=50, seed=42)
-        feed = SimulatedFeed(config)
-
-        bars = []
-        async for bar in feed.bars():
-            bars.append(bar)
-
-        assert len(bars) == 50
-
-    async def test_bar_ohlc_consistency(self):
-        """Every bar should satisfy H >= max(O,C) and L <= min(O,C)."""
-        config = SimulatedFeedConfig(max_bars=100, seed=99)
-        feed = SimulatedFeed(config)
-
-        async for bar in feed.bars():
-            assert bar.high >= bar.open, f"High < Open: {bar}"
-            assert bar.high >= bar.close, f"High < Close: {bar}"
-            assert bar.low <= bar.open, f"Low > Open: {bar}"
-            assert bar.low <= bar.close, f"Low > Close: {bar}"
-
-    async def test_bar_has_required_fields(self):
-        """Every bar should have timeframe, tick_volume, spread."""
-        config = SimulatedFeedConfig(max_bars=5, seed=42)
-        feed = SimulatedFeed(config)
-
-        async for bar in feed.bars():
-            assert bar.timeframe == Timeframe.M1
-            assert bar.tick_volume >= 0
-            assert bar.spread >= 0
-
-    async def test_stop(self):
-        """Feed should stop when stop() is called."""
-        config = SimulatedFeedConfig(max_bars=0, seed=42)  # Infinite
-        feed = SimulatedFeed(config)
-
-        count = 0
-        async for bar in feed.bars():
-            count += 1
-            if count >= 10:
-                feed.stop()
-
-        assert count >= 10
-
-    async def test_timestamps_increment(self):
-        """Bar timestamps should be monotonically increasing."""
-        config = SimulatedFeedConfig(max_bars=20, seed=42)
-        feed = SimulatedFeed(config)
-
-        timestamps = []
-        async for bar in feed.bars():
-            timestamps.append(bar.timestamp)
-
-        for i in range(1, len(timestamps)):
-            assert timestamps[i] > timestamps[i - 1]
-
-
 class TestReplayFeed:
     """Tests for the historical replay feed."""
 
@@ -454,27 +391,6 @@ class TestPaperLedger:
 class TestPaperSession:
     """Integration tests for the paper trading session orchestrator."""
 
-    async def test_session_runs_with_simulated_feed(self):
-        """Session should run through simulated bars without errors."""
-        from aphelion.paper.session import PaperSession, PaperSessionConfig
-
-        config = PaperSessionConfig(
-            session_id="test_sim_001",
-            initial_capital=10_000.0,
-            warmup_bars=5,
-            monitor_enabled=False,  # No async monitor in sync tests
-        )
-        feed_config = SimulatedFeedConfig(max_bars=20, seed=42)
-        feed = SimulatedFeed(feed_config)
-
-        session = PaperSession(config, feed)
-        result = await session.run()
-
-        assert result.bars_processed == 20
-        assert result.error_count == 0
-        assert result.final_equity > 0
-        assert result.session_id == "test_sim_001"
-
     async def test_session_runs_with_replay_feed(self):
         """Session should run through replayed bars without errors."""
         from aphelion.paper.session import PaperSession, PaperSessionConfig
@@ -505,7 +421,8 @@ class TestPaperSession:
             warmup_bars=5,
             monitor_enabled=False,
         )
-        feed = SimulatedFeed(SimulatedFeedConfig(max_bars=10, seed=42))
+        bars = [_make_bar(ts_offset=i, close=2350.0 + i * 0.1) for i in range(10)]
+        feed = ReplayFeed(bars)
 
         session = PaperSession(config, feed)
         result = await session.run()
@@ -529,7 +446,8 @@ class TestPaperSession:
             warmup_bars=5,
             monitor_enabled=False,
         )
-        feed = SimulatedFeed(SimulatedFeedConfig(max_bars=10, seed=42))
+        bars = [_make_bar(ts_offset=i, close=2350.0 + i * 0.1) for i in range(10)]
+        feed = ReplayFeed(bars)
 
         session = PaperSession(config, feed)
         result = await session.run()
@@ -549,7 +467,8 @@ class TestPaperSession:
             warmup_bars=5,
             monitor_enabled=False,
         )
-        feed = SimulatedFeed(SimulatedFeedConfig(max_bars=30, seed=42))
+        bars = [_make_bar(ts_offset=i, close=2350.0 + i * 0.1) for i in range(30)]
+        feed = ReplayFeed(bars)
 
         session = PaperSession(config, feed)
         result = await session.run()
@@ -568,8 +487,9 @@ class TestPaperSession:
             warmup_bars=5,
             monitor_enabled=False,
         )
-        # Infinite feed
-        feed = SimulatedFeed(SimulatedFeedConfig(max_bars=0, seed=42))
+        # Large bar list to test early stop
+        bars = [_make_bar(ts_offset=i, close=2350.0 + i * 0.01) for i in range(1000)]
+        feed = ReplayFeed(bars)
 
         session = PaperSession(config, feed)
 

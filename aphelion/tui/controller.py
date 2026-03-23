@@ -563,9 +563,6 @@ class AphelionController:
         self._forge_ctrl = ForgeController()
         self._backtest_ctrl = BacktestController()
 
-        # Simulator (for simulated mode)
-        self._simulator = None
-
     # ── Properties ───────────────────────────────────────────────────
 
     @property
@@ -607,8 +604,6 @@ class AphelionController:
 
     @property
     def is_session_active(self) -> bool:
-        if self._simulator and self._simulator.is_running:
-            return True
         return self._session_ctrl.is_active
 
     # ── State callbacks ──────────────────────────────────────────────
@@ -627,12 +622,10 @@ class AphelionController:
 
     # ── Session lifecycle ────────────────────────────────────────────
 
-    def start_session(self, mode: str = "simulated") -> None:
-        """Start a trading session (paper or simulated).
+    def start_session(self, mode: str = "paper") -> None:
+        """Start a paper trading session.
 
-        For *simulated* mode the built-in LiveSimulator runs in a daemon
-        thread — zero external dependencies.  For *paper* mode we try
-        PaperRunner via SessionController with fallback to simulator.
+        Uses PaperRunner via SessionController with real MT5 data.
         """
         cfg = self._config
         cfg.trading.mode = mode
@@ -643,50 +636,31 @@ class AphelionController:
 
         self._set_system_state(SystemState.SESSION_RUNNING)
 
-        if mode == "simulated":
-            from aphelion.tui.simulator import LiveSimulator
-            capital = cfg.trading.capital
-            symbol = cfg.trading.symbol
-            self._simulator = LiveSimulator(state, cfg)
-            self._simulator.start(capital=capital, symbol=symbol)
-            if state:
-                state.session_name = f"Sim-{symbol}"
-                state.push_log("INFO", f"Simulated session started — {symbol} — ${capital:,.0f}")
-        else:
-            # Paper mode — try PaperRunner, fall back to simulator
-            if state:
-                state.push_log("INFO", f"Starting {mode} session — {cfg.trading.symbol}")
-                state.session_name = f"Paper-{cfg.trading.symbol}"
-            try:
-                from aphelion.tui.config import config_to_runner_config
-                runner_config = config_to_runner_config(cfg, mode)
-                # PaperRunner is async — need an event loop
-                import asyncio
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    asyncio.ensure_future(
-                        self._session_ctrl.start_session(runner_config, state)
-                    )
-                else:
-                    loop.run_until_complete(
-                        self._session_ctrl.start_session(runner_config, state)
-                    )
-            except Exception as exc:
-                logger.warning("PaperRunner unavailable, using simulator: %s", exc)
-                from aphelion.tui.simulator import LiveSimulator
-                self._simulator = LiveSimulator(state, cfg)
-                self._simulator.start(
-                    capital=cfg.trading.capital,
-                    symbol=cfg.trading.symbol,
+        if state:
+            state.push_log("INFO", f"Starting {mode} session — {cfg.trading.symbol}")
+            state.session_name = f"Paper-{cfg.trading.symbol}"
+        try:
+            from aphelion.tui.config import config_to_runner_config
+            runner_config = config_to_runner_config(cfg, mode)
+            # PaperRunner is async — need an event loop
+            import asyncio
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.ensure_future(
+                    self._session_ctrl.start_session(runner_config, state)
                 )
-                if state:
-                    state.session_name = f"Sim-{cfg.trading.symbol}"
+            else:
+                loop.run_until_complete(
+                    self._session_ctrl.start_session(runner_config, state)
+                )
+        except Exception as exc:
+            logger.error("PaperRunner failed: %s", exc)
+            if state:
+                state.push_log("ERROR", f"Session start failed: {exc}")
+            self._set_system_state(SystemState.IDLE)
 
     def stop_session(self) -> None:
-        """Stop whatever session is running (simulator or PaperRunner)."""
-        if self._simulator and self._simulator.is_running:
-            self._simulator.stop()
-            self._simulator = None
+        """Stop the active PaperRunner session."""
         if self._session_ctrl.is_active:
             try:
                 import asyncio

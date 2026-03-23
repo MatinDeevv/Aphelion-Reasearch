@@ -23,7 +23,7 @@
   },
   "training": {
     "name": "custom",
-    "data_source": "synthetic",
+    "data_source": "real",
     "data_path": "",
     "epochs": 20,
     "batch_size": 512,

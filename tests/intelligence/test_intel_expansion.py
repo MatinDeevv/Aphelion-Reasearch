@@ -1,4 +1,4 @@
-"""Tests for Intelligence expansion — KRONOS analytics, ECHO matcher, FORGE scheduler, SHADOW scenarios."""
+"""Tests for Intelligence expansion — KRONOS analytics, ECHO matcher, FORGE scheduler."""
 
 import pytest
 from datetime import datetime, timedelta, timezone
@@ -8,8 +8,6 @@ from aphelion.intelligence.kronos.report_generator import KronosReportGenerator
 from aphelion.intelligence.echo.matcher import PatternMatcher
 from aphelion.intelligence.forge.scheduler import ForgeScheduler, ScheduledJob, create_default_schedule
 from aphelion.intelligence.forge.parameter_space import ParameterSpace, create_default_parameter_space
-from aphelion.intelligence.shadow.regime_simulator import AdvancedRegimeSimulator, RegimeScenario
-from aphelion.intelligence.shadow.stress_scenarios import StressScenarioLibrary
 
 
 # ── KronosAnalytics ─────────────────────────────────────────────────────────
@@ -188,75 +186,3 @@ class TestParameterSpace:
     def test_total_dimensions(self):
         ps = create_default_parameter_space()
         assert ps.total_dimensions >= 10
-
-
-# ── AdvancedRegimeSimulator ─────────────────────────────────────────────────
-
-class TestAdvancedRegimeSimulator:
-
-    def test_generate_trending(self):
-        sim = AdvancedRegimeSimulator()
-        scenario = RegimeScenario(name="trend", regime="TRENDING", n_bars=100)
-        bars = sim.generate_scenario(scenario)
-        assert len(bars) == 100
-
-    def test_generate_ranging(self):
-        sim = AdvancedRegimeSimulator()
-        scenario = RegimeScenario(name="range", regime="RANGING", n_bars=100)
-        bars = sim.generate_scenario(scenario)
-        assert len(bars) == 100
-
-    def test_generate_volatile(self):
-        sim = AdvancedRegimeSimulator()
-        scenario = RegimeScenario(name="vol", regime="VOLATILE", n_bars=50)
-        bars = sim.generate_scenario(scenario)
-        assert len(bars) == 50
-
-    def test_generate_crisis(self):
-        sim = AdvancedRegimeSimulator()
-        scenario = RegimeScenario(name="crisis", regime="CRISIS", n_bars=50)
-        bars = sim.generate_scenario(scenario)
-        assert len(bars) == 50
-
-    def test_transition_scenario(self):
-        sim = AdvancedRegimeSimulator()
-        phases = [
-            RegimeScenario(name="trend", regime="TRENDING", n_bars=50),
-            RegimeScenario(name="range", regime="RANGING", n_bars=50),
-        ]
-        multi = sim.generate_transition(phases)
-        assert len(multi) >= 100
-
-
-# ── StressScenarioLibrary ──────────────────────────────────────────────────
-
-class TestStressScenarioLibrary:
-
-    def test_list_scenarios(self):
-        lib = StressScenarioLibrary()
-        names = lib.list_scenarios()
-        assert len(names) >= 5
-
-    def test_generate_scenario(self):
-        lib = StressScenarioLibrary()
-        for name in lib.list_scenarios():
-            bars = lib.generate_scenario(name)
-            assert bars is not None
-            assert len(bars) > 0
-
-    def test_unknown_scenario_raises(self):
-        lib = StressScenarioLibrary()
-        with pytest.raises(ValueError):
-            lib.generate_scenario("nonexistent")
-
-    def test_flash_crash_has_drop(self):
-        lib = StressScenarioLibrary()
-        bars = lib.generate_scenario("flash_crash")
-        assert len(bars) > 0
-        closes = [b.close for b in bars]
-        assert min(closes) < closes[0]  # Price drops
-
-    def test_generate_all(self):
-        lib = StressScenarioLibrary()
-        all_scenarios = lib.generate_all()
-        assert len(all_scenarios) >= 5

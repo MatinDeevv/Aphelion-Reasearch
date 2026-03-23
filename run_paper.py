@@ -6,8 +6,7 @@ Single-command entry point for paper trading with full system wiring:
     MT5TickFeed → FeatureEngine → HYDRA → SENTINEL → TUI
 
 Usage:
-    python run_paper.py                          # Simulated feed (no MT5 needed)
-    python run_paper.py --mode mt5_tick          # Live MT5 tick feed
+    python run_paper.py                          # Live MT5 tick feed (default)
     python run_paper.py --mode replay --bars 500 # Replay historical bars
     python run_paper.py --capital 25000          # Custom starting capital
     python run_paper.py --no-tui                 # Headless (logging only)
@@ -37,7 +36,7 @@ project_root = Path(__file__).resolve().parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from aphelion.paper.feed import FeedConfig, FeedMode, SimulatedFeedConfig
+from aphelion.paper.feed import FeedConfig, FeedMode
 from aphelion.paper.runner import PaperRunner, PaperRunnerConfig
 from aphelion.paper.session import PaperSessionConfig
 from aphelion.risk.sentinel.execution.mt5 import MT5Config
@@ -49,9 +48,9 @@ def parse_args() -> argparse.Namespace:
         description="APHELION Paper Trading — end-to-end launcher",
     )
     parser.add_argument(
-        "--mode", type=str, default="simulated",
-        choices=["simulated", "mt5_tick", "live", "replay"],
-        help="Data feed mode (default: simulated)",
+        "--mode", type=str, default="live",
+        choices=["mt5_tick", "live", "replay"],
+        help="Data feed mode (default: live)",
     )
     parser.add_argument("--capital", type=float, default=10_000.0, help="Starting capital (USD)")
     parser.add_argument("--symbol", type=str, default="XAUUSD", help="Trading symbol")
@@ -65,7 +64,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--mt5-retry-delay", type=float, default=float(os.getenv("MT5_RETRY_DELAY", "5.0")), help="Seconds between MT5 retries (env: MT5_RETRY_DELAY)")
     parser.add_argument("--poll-ms", type=int, default=100, help="Tick poll interval (ms)")
     parser.add_argument("--warmup", type=int, default=200, help="Warmup bars to pre-load")
-    parser.add_argument("--sim-bars", type=int, default=500, help="Number of simulated bars (0 = infinite)")
     parser.add_argument("--no-tui", action="store_true", help="Disable TUI (console logging only)")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable DEBUG logging")
     return parser.parse_args()
@@ -90,7 +88,6 @@ def setup_logging(verbose: bool = False) -> None:
 def build_config(args: argparse.Namespace) -> PaperRunnerConfig:
     """Build the full runner config from CLI arguments."""
     mode_map = {
-        "simulated": FeedMode.SIMULATED,
         "mt5_tick": FeedMode.MT5_TICK,
         "live": FeedMode.LIVE,
         "replay": FeedMode.REPLAY,
@@ -118,9 +115,6 @@ def build_config(args: argparse.Namespace) -> PaperRunnerConfig:
             symbol=args.symbol,
             hydra_checkpoint=args.hydra_checkpoint,
             warmup_bars=max(64, args.warmup),
-        ),
-        sim_config=SimulatedFeedConfig(
-            max_bars=args.sim_bars,
         ),
         enable_tui=not args.no_tui,
     )

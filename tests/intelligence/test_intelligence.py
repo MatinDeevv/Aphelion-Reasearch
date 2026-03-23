@@ -1,4 +1,4 @@
-"""Tests for Intelligence modules — KRONOS, ECHO, FORGE, SHADOW."""
+"""Tests for Intelligence modules — KRONOS, ECHO, FORGE."""
 
 import pytest
 import numpy as np
@@ -7,7 +7,6 @@ from datetime import datetime
 from aphelion.intelligence.kronos.journal import KRONOSJournal, TradeRecord, PerformanceMetrics
 from aphelion.intelligence.echo.library import PatternLibrary, PatternEncoder, PatternFingerprint
 from aphelion.intelligence.forge.optimizer import ForgeOptimizer, BayesianOptimizer, ParameterSpec
-from aphelion.intelligence.shadow.generator import ShadowGenerator, RegimeSimulator, StressScenarioGenerator, SyntheticBar
 
 
 # ── KRONOS Journal ────────────────────────────────────────────────
@@ -167,50 +166,6 @@ class TestForgeOptimizer:
         assert forge.trial_count == 1
 
 
-# ── SHADOW Generator ──────────────────────────────────────────────
-
-
-class TestRegimeSimulator:
-    def test_trending_data(self):
-        sim = RegimeSimulator()
-        bars = sim.generate_trending(n_bars=100, start_price=2000.0, direction=1)
-        assert len(bars) == 100
-        assert isinstance(bars[0], SyntheticBar)
-        assert bars[-1].close > bars[0].close
-
-    def test_ranging_data(self):
-        sim = RegimeSimulator()
-        bars = sim.generate_ranging(n_bars=100, center_price=2000.0)
-        assert len(bars) == 100
-
-    def test_volatile_data(self):
-        sim = RegimeSimulator()
-        bars = sim.generate_volatile(n_bars=100, start_price=2000.0)
-        assert len(bars) == 100
-
-    def test_crisis_data(self):
-        sim = RegimeSimulator()
-        bars = sim.generate_crisis(n_bars=100, start_price=2000.0)
-        assert len(bars) == 100
-
-
-class TestStressScenarioGenerator:
-    def test_flash_crash(self):
-        gen = StressScenarioGenerator()
-        bars = gen.generate_flash_crash(n_bars=50)
-        assert len(bars) > 0
-        assert isinstance(bars[0], SyntheticBar)
-
-    def test_gap_up(self):
-        gen = StressScenarioGenerator()
-        result = gen.generate_gap_up(start_price=2000.0, gap_pct=0.03)
-        assert isinstance(result, SyntheticBar)
-        assert result.open > 2000.0
-
-
-class TestShadowGenerator:
-    def test_mixed_regime(self):
-        shadow = ShadowGenerator()
-        bars = shadow.generate_mixed_regime(n_bars=200)
-        assert len(bars) == 200
-        assert all(isinstance(b, SyntheticBar) for b in bars)
+# ── SHADOW Generator — REMOVED ───────────────────────────────────
+# Synthetic data generation has been removed from Aphelion.
+# All tests that used SHADOW have been removed.
