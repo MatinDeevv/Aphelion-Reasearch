@@ -1,22 +1,8 @@
 """
-SHADOW — Synthetic Data Generator
+SHADOW — Synthetic Data Generator — REMOVED.
+
+All synthetic data generation has been removed from Aphelion.
+The system now operates exclusively on real market data.
 """
 
-from .generator import (
-    ShadowGenerator,
-    RegimeSimulator,
-    StressScenarioGenerator,
-    SyntheticBar,
-)
-from .regime_simulator import AdvancedRegimeSimulator, RegimeScenario
-from .stress_scenarios import StressScenarioLibrary
-
-__all__ = [
-    "ShadowGenerator",
-    "RegimeSimulator",
-    "StressScenarioGenerator",
-    "SyntheticBar",
-    "AdvancedRegimeSimulator",
-    "RegimeScenario",
-    "StressScenarioLibrary",
-]
+__all__: list[str] = []

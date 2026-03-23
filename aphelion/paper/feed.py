@@ -3,7 +3,6 @@ APHELION Paper Trading Data Feed
 Abstraction layer that provides bar-by-bar data from multiple sources:
   - LIVE: Real-time bars via MT5Connection (bar-level polling)
   - REPLAY: Replays historical Bar lists at real speed (or accelerated)
-  - SIMULATED: Random-walk price generator for testing
   - MT5_TICK: Production tick-level streaming with bar aggregation (Phase 5)
 """
 
@@ -31,7 +30,6 @@ logger = logging.getLogger(__name__)
 class FeedMode(Enum):
     LIVE = auto()
     REPLAY = auto()
-    SIMULATED = auto()
     MT5_TICK = auto()
 
 
@@ -133,88 +131,6 @@ class ReplayFeed(DataFeed):
             yield bar
 
         logger.info("ReplayFeed exhausted")
-
-    def stop(self) -> None:
-        self._running = False
-
-
-# ── Simulated random-walk feed ───────────────────────────────────────────────
-
-@dataclass
-class SimulatedFeedConfig:
-    """Configuration for the random-walk test feed."""
-    start_price: float = 2350.0
-    volatility: float = 0.001          # Per-bar return std dev
-    trend: float = 0.0                 # Per-bar drift
-    bar_interval_seconds: float = 60   # Time between bars
-    symbol: str = "XAUUSD"
-    timeframe: Timeframe = Timeframe.M1
-    seed: int = 42
-    max_bars: int = 0                  # 0 = infinite
-
-
-class SimulatedFeed(DataFeed):
-    """
-    Generates synthetic bars via geometric random walk.
-    Useful for testing the paper session without MT5.
-    """
-
-    def __init__(self, config: Optional[SimulatedFeedConfig] = None):
-        self._config = config or SimulatedFeedConfig()
-        self._rng = np.random.default_rng(self._config.seed)
-        self._running = True
-
-    async def bars(self) -> AsyncIterator[Bar]:
-        """Yield synthetic bars continuously."""
-        price = self._config.start_price
-        bar_count = 0
-        ts = datetime.now(timezone.utc)
-        interval = timedelta(seconds=self._config.bar_interval_seconds)
-
-        logger.info(
-            "SimulatedFeed started — price=%.2f, vol=%.4f",
-            price, self._config.volatility,
-        )
-
-        while self._running:
-            if 0 < self._config.max_bars <= bar_count:
-                break
-
-            # Generate OHLCV via random walk
-            returns = self._rng.normal(self._config.trend, self._config.volatility, 4)
-            o = price
-            h = o * (1 + abs(returns[0]))
-            l = o * (1 - abs(returns[1]))
-            c = o * (1 + returns[2])
-            v = max(100, self._rng.poisson(500))
-
-            # Ensure OHLC consistency
-            h = max(o, h, c)
-            l = min(o, l, c)
-
-            bar = Bar(
-                timestamp=ts,
-                timeframe=self._config.timeframe,
-                open=round(o, 2),
-                high=round(h, 2),
-                low=round(l, 2),
-                close=round(c, 2),
-                volume=float(v),
-                tick_volume=int(v),
-                spread=round(abs(returns[3]) * o * 0.01, 2),
-                is_complete=True,
-            )
-
-            yield bar
-
-            price = c
-            ts += interval
-            bar_count += 1
-
-            # Small async yield to keep the event loop responsive
-            await asyncio.sleep(0)
-
-        logger.info("SimulatedFeed stopped after %d bars", bar_count)
 
     def stop(self) -> None:
         self._running = False

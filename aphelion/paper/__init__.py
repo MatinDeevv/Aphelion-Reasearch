@@ -11,7 +11,6 @@ from aphelion.paper.feed import (
     LiveMT5Feed,
     MT5TickFeed,
     ReplayFeed,
-    SimulatedFeed,
 )
 from aphelion.paper.ledger import PaperLedger
 from aphelion.paper.runner import PaperRunner, PaperRunnerConfig
@@ -32,7 +31,6 @@ __all__ = [
     "PaperSessionConfig",
     "PaperSessionResult",
     "ReplayFeed",
-    "SimulatedFeed",
     "LatencyProfile",
     "LiveReadinessGate",
     "ReadinessCheck",

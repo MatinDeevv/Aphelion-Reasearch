@@ -1,11 +1,10 @@
 """
 APHELION HYDRA Training Script (Phase 7)
-Trains the full ensemble on synthetic OR real market data.
+Trains the full ensemble on real market data.
 
 Usage:
-    python scripts/train_hydra.py                              # Quick validation (synthetic, 500 bars, 2 epochs)
-    python scripts/train_hydra.py --full                       # Full synthetic (10000 bars, 20 epochs)
-    python scripts/train_hydra.py --data data/bars/xauusd_m1.csv --full   # Real data from MT5 export
+    python scripts/train_hydra.py --data data/bars/xauusd_m1.csv                          # Quick validation (2 epochs)
+    python scripts/train_hydra.py --data data/bars/xauusd_m1.csv --full                   # Full training (20 epochs)
     python scripts/train_hydra.py --data data/bars/xauusd_m1.csv --epochs 50 --batch-size 64
 """
 
@@ -37,90 +36,6 @@ from aphelion.intelligence.hydra.transformer import TransformerConfig
 from aphelion.intelligence.hydra.trainer import HydraTrainer, TrainerConfig
 
 
-def generate_synthetic_data(n_bars: int = 10000) -> pd.DataFrame:
-    """
-    Generate synthetic OHLCV data with defined regime patterns:
-    - Trend regime (bars 1000-2000): positive drift
-    - Range regime (bars 3000-4000): mean-reverting
-    - Volatile regime (bars 4000-5000): high variance
-    - News spike (bars 7500-7600): sudden move + reversion
-    """
-    logger.info(f"Generating {n_bars} synthetic bars for training...")
-
-    np.random.seed(42)
-
-    # 1. Base random walk
-    returns = np.random.normal(0, 0.001, n_bars)
-
-    # Trend regime
-    if n_bars > 2000:
-        returns[1000:2000] += 0.0005
-
-    # Range regime (mean revert toward 0)
-    if n_bars > 4000:
-        returns[3000:4000] *= 0.3
-
-    # Volatile regime
-    if n_bars > 5000:
-        returns[4000:5000] *= 3.0
-
-    # News spike
-    if n_bars > 7600:
-        returns[7500] = 0.02
-        returns[7501:7600] -= 0.0003  # Gradual reversion
-
-    # Generate prices
-    close = 2000.0 * np.exp(np.cumsum(returns))
-    high = close * (1 + np.abs(np.random.normal(0, 0.0005, n_bars)))
-    low = close * (1 - np.abs(np.random.normal(0, 0.0005, n_bars)))
-    open_p = np.roll(close, 1)
-    open_p[0] = 2000.0
-
-    volume = np.random.randint(10, 1000, n_bars).astype(float)
-    # Higher volume during volatile regime
-    if n_bars > 5000:
-        volume[4000:5000] *= 3
-
-    df = pd.DataFrame({
-        "open": open_p,
-        "high": high,
-        "low": low,
-        "close": close,
-        "volume": volume,
-    })
-
-    # Add categorical features
-    sessions = ["ASIAN", "LONDON", "OVERLAP_LDN_NY", "NEW_YORK", "DEAD_ZONE"]
-    days = ["MON", "TUE", "WED", "THU", "FRI"]
-    df["session"] = [sessions[i % len(sessions)] for i in range(n_bars)]
-    df["day_of_week"] = [days[(i // (24 * 60)) % len(days)] for i in range(n_bars)]
-
-    # Generate remaining continuous features as correlated noise
-    atr = np.abs(high - low)
-    rsi = 50 + 10 * np.tanh(np.cumsum(returns) * 100)
-    bb_width = atr / close * 100
-
-    for feat in CONTINUOUS_FEATURES:
-        if feat in df.columns:
-            continue
-        elif feat == "atr":
-            df[feat] = atr
-        elif feat == "rsi":
-            df[feat] = rsi
-        elif feat == "bb_width":
-            df[feat] = bb_width
-        elif feat == "vpin":
-            df[feat] = np.abs(np.random.normal(0, 0.3, n_bars))
-        elif "distance" in feat:
-            df[feat] = np.random.exponential(0.01, n_bars)
-        elif "delta" in feat:
-            df[feat] = np.cumsum(np.random.normal(0, 100, n_bars))
-        else:
-            df[feat] = np.random.normal(0, 1, n_bars)
-
-    return df
-
-
 def load_real_data(csv_path: str) -> pd.DataFrame:
     """
     Load real OHLCV data from a CSV exported by export_mt5_data.py.
@@ -132,6 +47,17 @@ def load_real_data(csv_path: str) -> pd.DataFrame:
 
     # Normalise column names to lowercase
     df.columns = [c.strip().lower() for c in df.columns]
+
+    # Accept both the simple MT5 export format and the richer bulk-export format.
+    rename_map = {}
+    if "time" in df.columns and "timestamp" not in df.columns:
+        rename_map["time"] = "timestamp"
+    if "tick_vol" in df.columns and "volume" not in df.columns:
+        rename_map["tick_vol"] = "volume"
+    if "real_vol" in df.columns and "real_volume" not in df.columns:
+        rename_map["real_vol"] = "real_volume"
+    if rename_map:
+        df = df.rename(columns=rename_map)
 
     required = {"open", "high", "low", "close", "volume"}
     missing = required - set(df.columns)
@@ -286,7 +212,6 @@ def build_full_ensemble_config() -> EnsembleConfig:
 
 
 def run_training(
-    n_bars: int = 500,
     max_epochs: int = 2,
     batch_size: int = 32,
     full_model: bool = False,
@@ -297,21 +222,22 @@ def run_training(
     Run the full training pipeline.
 
     Args:
-        data_csv: Path to a CSV with real OHLCV data. If empty, uses synthetic data.
+        data_csv: Path to a CSV with real OHLCV data. Required.
 
     Returns:
         Training result metrics dict.
     """
     t0 = time.time()
 
-    # 1. Load data — real CSV or synthetic
-    if data_csv:
-        df = load_real_data(data_csv)
-        n_bars = len(df)
-        logger.info(f"Using REAL data: {n_bars:,} bars from {data_csv}")
-    else:
-        df = generate_synthetic_data(n_bars)
-        logger.info(f"Using SYNTHETIC data: {n_bars:,} bars")
+    # 1. Load data — real CSV only
+    if not data_csv:
+        raise ValueError(
+            "Real data CSV is required. Use --data <path> to provide OHLCV data "
+            "exported from MT5 via export_mt5_data.py."
+        )
+    df = load_real_data(data_csv)
+    n_bars = len(df)
+    logger.info(f"Using REAL data: {n_bars:,} bars from {data_csv}")
 
     feature_dicts = df.to_dict(orient="records")
     close_prices = df["close"].values
@@ -375,25 +301,21 @@ def run_training(
 
 def main():
     parser = argparse.ArgumentParser(description="APHELION HYDRA Training")
-    parser.add_argument("--full", action="store_true", help="Full training (10K bars, 20 epochs)")
-    parser.add_argument("--data", type=str, default="", help="Path to real OHLCV CSV (from export_mt5_data.py)")
-    parser.add_argument("--bars", type=int, default=None, help="Override bar count (synthetic only)")
+    parser.add_argument("--full", action="store_true", help="Full training (20 epochs)")
+    parser.add_argument("--data", type=str, required=True, help="Path to real OHLCV CSV (from export_mt5_data.py)")
     parser.add_argument("--epochs", type=int, default=None, help="Override epoch count")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
     parser.add_argument("--checkpoint-dir", type=str, default="models/hydra", help="Checkpoint dir")
     args = parser.parse_args()
 
     if args.full:
-        n_bars = args.bars or 10000
         max_epochs = args.epochs or 20
         full_model = True
     else:
-        n_bars = args.bars or 500
         max_epochs = args.epochs or 2
         full_model = False
 
     results = run_training(
-        n_bars=n_bars,
         max_epochs=max_epochs,
         batch_size=args.batch_size,
         full_model=full_model,

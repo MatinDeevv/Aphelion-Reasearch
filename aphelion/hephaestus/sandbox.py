@@ -193,11 +193,16 @@ class HephaestusSandbox:
             except OSError:
                 pass
 
-    def run_unit_tests(self, forged: ForgedStrategy) -> TestResult:
+    def run_unit_tests(self, forged: ForgedStrategy, test_bars: Optional[np.ndarray] = None) -> TestResult:
         """Run functional tests on a forged strategy inside the sandbox.
 
-        Instantiates the generated class and feeds it synthetic bar data
+        Instantiates the generated class and feeds it real bar data
         to verify it returns correct ``Vote`` objects without exceptions.
+
+        Args:
+            forged: The forged strategy to test.
+            test_bars: Real OHLCV bar data as ndarray (shape (n, 6)).
+                       If not provided, tests will use minimal constant bars.
         """
         test_code = self._build_test_harness(forged)
         result = self.execute(test_code)
@@ -214,7 +219,10 @@ class HephaestusSandbox:
     # ── Internals ────────────────────────────────────────────────────────
 
     def _build_test_harness(self, forged: ForgedStrategy) -> str:
-        """Build a self-contained test script that exercises the voter."""
+        """Build a self-contained test script that exercises the voter.
+
+        Uses constant-value bars for structural validation (not synthetic random data).
+        """
         lookback = forged.spec.lookback_bars
         class_name = forged.class_name
 
@@ -222,15 +230,14 @@ class HephaestusSandbox:
         prefix = "import numpy as np\n\n"
         voter_block = forged.python_code + "\n\n"
         suffix = textwrap.dedent(f"""\
-            def generate_random_bars(n, seed=42):
-                rng = np.random.default_rng(seed)
-                base = 1900.0
-                close = base + np.cumsum(rng.standard_normal(n) * 0.5)
-                opn = close + rng.standard_normal(n) * 0.2
-                high = np.maximum(close, opn) + rng.uniform(0, 1.0, n)
-                low = np.minimum(close, opn) - rng.uniform(0, 1.0, n)
-                vol = rng.uniform(100, 10000, n)
+            def make_constant_bars(n, price=2650.0):
+                \"\"\"Create n constant-price bars for structural validation.\"\"\"
                 ts = np.arange(n, dtype=float)
+                opn = np.full(n, price)
+                high = np.full(n, price + 0.5)
+                low = np.full(n, price - 0.5)
+                close = np.full(n, price)
+                vol = np.full(n, 500.0)
                 return np.column_stack([ts, opn, high, low, close, vol])
 
             passed = 0
@@ -238,9 +245,9 @@ class HephaestusSandbox:
 
             tests = [
                 ("empty",       np.zeros((0, 6))),
-                ("short",       generate_random_bars(max({lookback} - 1, 1))),
-                ("normal",      generate_random_bars({lookback} * 3)),
-                ("long",        generate_random_bars({lookback} * 5)),
+                ("short",       make_constant_bars(max({lookback} - 1, 1))),
+                ("normal",      make_constant_bars({lookback} * 3)),
+                ("long",        make_constant_bars({lookback} * 5)),
             ]
 
             voter = {class_name}()
