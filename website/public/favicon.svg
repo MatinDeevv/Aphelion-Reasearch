@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!--
+    Aphelion Research favicon — stylised "A" on dark background.
+    Place alongside favicon.ico in /public.
+    Browsers that support SVG favicons will use this in preference to the .ico.
+  -->
+  <rect width="100" height="100" rx="14" fill="#0a0f1e"/>
+  <text
+    x="50" y="72"
+    font-family="Georgia, serif"
+    font-size="68"
+    font-weight="bold"
+    fill="#c9a84c"
+    text-anchor="middle"
+  >A</text>
+</svg>
