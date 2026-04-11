@@ -159,6 +159,13 @@ From `pyproject.toml`:
 
 For a quick top-level navigation map, see `docs/REPOSITORY_STRUCTURE.md`.
 
+Documentation is grouped by purpose:
+
+- `docs/guides/` for walkthroughs and usage docs
+- `docs/architecture/` for repository and data-layout notes
+- `docs/specs/` for engineering specs and long-form design docs
+- `docs/checklists/` for phase checklists and objectives
+
 ```text
 aphelion/
   core/                 implemented

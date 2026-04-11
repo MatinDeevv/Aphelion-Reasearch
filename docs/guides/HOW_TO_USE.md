@@ -290,7 +290,7 @@ Connect to MetaTrader 5 for live paper trading:
 python run_paper.py
 
 # Or run the all-in-one demo
-python scripts/runall.py
+python runall.py
 ```
 
 ```python
